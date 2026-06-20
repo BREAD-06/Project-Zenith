@@ -1,0 +1,78 @@
+import type { CelestialObject } from '@/types/celestial'
+
+// Observer default: Chennai 12.9716°N, 80.2437°E
+// Objects with topo.altitude 75–90 are in the Zenith Window
+export const SEED_OBJECTS: CelestialObject[] = [
+  {
+    id: 'iss',
+    name: 'ISS (ZARYA)',
+    category: 'iss',
+    geo: { latitude: 13.2, longitude: 80.8, heightKm: 408 },
+    topo: { altitude: 82.3, azimuth: 15.4, rangekm: 420 },
+    inZenithWindow: true,
+    updatedAt: Date.now(),
+  },
+  {
+    id: 'sat-noaa-19',
+    name: 'NOAA 19',
+    category: 'satellite',
+    geo: { latitude: 14.1, longitude: 79.5, heightKm: 870 },
+    topo: { altitude: 76.8, azimuth: 340.2, rangekm: 895 },
+    inZenithWindow: true,
+    updatedAt: Date.now(),
+  },
+  {
+    id: 'sat-starlink-1234',
+    name: 'STARLINK-1234',
+    category: 'satellite',
+    geo: { latitude: 12.1, longitude: 81.4, heightKm: 550 },
+    topo: { altitude: 85.1, azimuth: 92.3, rangekm: 552 },
+    inZenithWindow: true,
+    updatedAt: Date.now(),
+  },
+  {
+    id: 'sat-terra',
+    name: 'TERRA',
+    category: 'satellite',
+    geo: { latitude: -20.4, longitude: 110.3, heightKm: 705 },
+    topo: { altitude: 31.2, azimuth: 140.5, rangekm: 1420 },
+    inZenithWindow: false,
+    updatedAt: Date.now(),
+  },
+  {
+    id: 'sat-aqua',
+    name: 'AQUA',
+    category: 'satellite',
+    geo: { latitude: 45.1, longitude: 55.2, heightKm: 705 },
+    topo: { altitude: 22.7, azimuth: 325.1, rangekm: 2100 },
+    inZenithWindow: false,
+    updatedAt: Date.now(),
+  },
+  {
+    id: 'sat-goes-16',
+    name: 'GOES-16',
+    category: 'satellite',
+    geo: { latitude: 0.0, longitude: -75.2, heightKm: 35_786 },
+    topo: { altitude: 7.4, azimuth: 270.0, rangekm: 39_200 },
+    inZenithWindow: false,
+    updatedAt: Date.now(),
+  },
+  {
+    id: 'planet-mars',
+    name: 'Mars',
+    category: 'planet',
+    geo: { latitude: 5.2, longitude: 85.3, heightKm: 50_000 },
+    topo: { altitude: 48.3, azimuth: 210.0, rangekm: 225_000_000 },
+    inZenithWindow: false,
+    updatedAt: Date.now(),
+  },
+  {
+    id: 'planet-jupiter',
+    name: 'Jupiter',
+    category: 'planet',
+    geo: { latitude: -10.5, longitude: 60.2, heightKm: 50_000 },
+    topo: { altitude: 29.4, azimuth: 270.5, rangekm: 628_000_000 },
+    inZenithWindow: false,
+    updatedAt: Date.now(),
+  },
+]

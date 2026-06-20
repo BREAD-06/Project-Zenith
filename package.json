@@ -8,9 +8,13 @@
     "start": "next start"
   },
   "dependencies": {
+    "cesium": "^1.129.0",
+    "copy-webpack-plugin": "^14.0.0",
     "next": "16.2.9",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "satellite.js": "^7.0.1",
+    "zustand": "^5.0.14"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -19,5 +23,9 @@
     "@types/react-dom": "^19",
     "tailwindcss": "^4",
     "typescript": "^5"
+  },
+  "overrides": {
+    "comment": "Cesium 1.129 imports @zip.js/zip.js/lib/zip-no-worker.js, which @zip.js 2.8.x removed. Pin to the 2.7.x line (still satisfies Cesium's ^2.7.34) so that path resolves.",
+    "@zip.js/zip.js": "2.7.73"
   }
 }

@@ -6,36 +6,44 @@ import type { CelestialObject } from '@/types/celestial'
 
 const CONE_LENGTH = 2_000_000
 const CONE_RADIUS = 280_000
-
 const MAX_SAMPLES_PER_TICK = 6
 
-// ── Dot style per category / zenith membership ────────────────────────────────
-// Returns raw Cesium Color/number values; called with the Cesium module object
-// so it can be used both during entity creation and during delta updates.
+// ── Pre-built Color cache ─────────────────────────────────────────────────────
+// Populated once after Cesium loads so getPointStyle never parses CSS strings
+// in the hot per-entity loop (fromCssColorString is surprisingly expensive at
+// 10 000 calls per tick).
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function getPointStyle(Cesium: any, category: string, inZenithWindow: boolean) {
+let C: Record<string, any> | null = null
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function buildColorCache(Cesium: any) {
+  if (C) return
+  C = {
+    satFill:       Cesium.Color.fromCssColorString('#4fc3f7').withAlpha(0.4),
+    satOutline:    Cesium.Color.fromCssColorString('#4fc3f7').withAlpha(0.15),
+    zenFill:       Cesium.Color.fromCssColorString('#00d4ff'),
+    zenOutline:    Cesium.Color.fromCssColorString('#c4b5fd').withAlpha(0.8),
+    issFill:       Cesium.Color.fromCssColorString('#ffcc02'),
+    issOutline:    Cesium.Color.WHITE.withAlpha(0.8),
+    coneBody:      Cesium.Color.fromCssColorString('#00d4ff').withAlpha(0.18),
+    coneOutline:   Cesium.Color.fromCssColorString('#00d4ff').withAlpha(0.7),
+    obsRingBody:   Cesium.Color.fromCssColorString('#7c3aed').withAlpha(0.12),
+    obsRingOL:     Cesium.Color.fromCssColorString('#c4b5fd').withAlpha(0.7),
+    obsDotFill:    Cesium.Color.fromCssColorString('#c4b5fd'),
+    labelFill:     Cesium.Color.WHITE,
+    labelOutline:  Cesium.Color.BLACK,
+    dotOutlineWh:  Cesium.Color.WHITE,
+  }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function getPointStyle(category: string, inZenithWindow: boolean): any {
   if (category === 'iss') {
-    return {
-      color: Cesium.Color.fromCssColorString('#ff6b35'),
-      pixelSize: 8,
-      outlineColor: Cesium.Color.fromCssColorString('#ff6b35').withAlpha(0.4),
-      outlineWidth: 3,
-    }
+    return { color: C!.issFill, pixelSize: 14, outlineColor: C!.issOutline, outlineWidth: 3 }
   }
   if (inZenithWindow) {
-    return {
-      color: Cesium.Color.fromCssColorString('#00d4ff'),
-      pixelSize: 6,
-      outlineColor: Cesium.Color.WHITE.withAlpha(0.4),
-      outlineWidth: 2,
-    }
+    return { color: C!.zenFill, pixelSize: 9, outlineColor: C!.zenOutline, outlineWidth: 3 }
   }
-  return {
-    color: Cesium.Color.fromCssColorString('#4fc3f7').withAlpha(0.75),
-    pixelSize: 3,
-    outlineColor: Cesium.Color.fromCssColorString('#4fc3f7').withAlpha(0.3),
-    outlineWidth: 1,
-  }
+  return { color: C!.satFill, pixelSize: 2, outlineColor: C!.satOutline, outlineWidth: 0 }
 }
 
 function injectCesiumCSS() {
@@ -72,20 +80,21 @@ export default function CelestialGlobe() {
     let viewer: any = null
     let cancelled = false
     const entityCache = new Map<string, EntityCacheEntry>()
+    // rAF handle so we never queue more than one sync per frame.
+    let pendingSyncRaf = 0
 
     getCesium().then(async (Cesium) => {
       if (cancelled || !containerRef.current) return
 
+      buildColorCache(Cesium)
       const { observer } = useZenithStore.getState()
 
-      // ── Viewer init ─────────────────────────────────────────────────────────
-      // Set Ion token before creating the viewer so asset 2 resolves correctly.
+      // ── Viewer ───────────────────────────────────────────────────────────────
       const ionToken = process.env.NEXT_PUBLIC_CESIUM_ION_TOKEN
       if (ionToken) Cesium.Ion.defaultAccessToken = ionToken
 
       try {
         viewer = new Cesium.Viewer(containerRef.current, {
-          // baseLayer: false → don't load any default imagery; we add our own below.
           baseLayer: false,
           baseLayerPicker: false,
           animation: false,
@@ -100,59 +109,52 @@ export default function CelestialGlobe() {
           navigationInstructionsInitiallyVisible: false,
         })
       } catch (err) {
-        console.error('[CelestialGlobe] Cesium viewer init failed:', err)
+        console.error('[CelestialGlobe] Viewer init failed:', err)
         return
       }
 
-      if (cancelled) {
-        if (!viewer.isDestroyed()) viewer.destroy()
-        return
-      }
+      if (cancelled) { viewer.isDestroyed() || viewer.destroy(); return }
 
-      // Crisp HiDPI rendering.
-      viewer.resolutionScale = window.devicePixelRatio ?? 1
+      // Cap at 1.5× — a 2× retina device would otherwise render at 4× the pixels.
+      viewer.resolutionScale = Math.min(window.devicePixelRatio ?? 1, 1.5)
 
       if (process.env.NODE_ENV === 'development') {
         viewer.scene.debugShowFramesPerSecond = true
       }
 
-      // Clock must animate so SampledPositionProperty interpolates in real-time.
       viewer.clock.shouldAnimate = true
       viewer.clock.multiplier = 1.0
 
-      // ── Imagery: Bing photorealistic aerial → fallback NaturalEarth II ──────
+      // ── Imagery ──────────────────────────────────────────────────────────────
       try {
         const bingProvider = await Cesium.IonImageryProvider.fromAssetId(2)
         if (!cancelled) viewer.imageryLayers.addImageryProvider(bingProvider)
       } catch {
-        console.warn('[CelestialGlobe] Bing/Ion imagery unavailable, using NaturalEarth II')
+        console.warn('[CelestialGlobe] Ion unavailable, falling back to NaturalEarth II')
         try {
-          const fallbackProvider = await Cesium.TileMapServiceImageryProvider.fromUrl(
+          const fp = await Cesium.TileMapServiceImageryProvider.fromUrl(
             Cesium.buildModuleUrl('Assets/Textures/NaturalEarthII')
           )
-          if (!cancelled) viewer.imageryLayers.addImageryProvider(fallbackProvider)
+          if (!cancelled) viewer.imageryLayers.addImageryProvider(fp)
         } catch (err) {
-          console.error('[CelestialGlobe] All imagery providers failed:', err)
+          console.error('[CelestialGlobe] All imagery failed:', err)
         }
       }
 
       if (cancelled || viewer.isDestroyed()) return
 
-      // ── Globe appearance ────────────────────────────────────────────────────
+      // ── Globe ────────────────────────────────────────────────────────────────
       viewer.scene.globe.show = true
-      // Black base so the ocean uses imagery colour rather than Cesium's default blue.
       viewer.scene.globe.baseColor = Cesium.Color.BLACK
-      // Lower = sharper imagery (default 2.0).
-      viewer.scene.globe.maximumScreenSpaceError = 1.5
-      // Keep false so satellite dots aren't clipped by terrain.
+      // Back to default 2.0 — 1.5 loads noticeably more tiles without a visible quality gain
+      // at 22 Mm altitude.
+      viewer.scene.globe.maximumScreenSpaceError = 2.0
       viewer.scene.globe.depthTestAgainstTerrain = false
 
-      // ── Atmosphere & lighting ───────────────────────────────────────────────
+      // ── Atmosphere & lighting ─────────────────────────────────────────────────
       viewer.scene.globe.showGroundAtmosphere = true
       viewer.scene.skyAtmosphere.show = true
       viewer.scene.skyBox.show = true
-
-      // Sun-driven terminator line (day/night split) + atmospheric glow.
       viewer.scene.globe.enableLighting = true
       viewer.scene.sun = new Cesium.Sun()
       viewer.scene.moon = new Cesium.Moon()
@@ -160,44 +162,22 @@ export default function CelestialGlobe() {
       try {
         viewer.scene.globe.dynamicAtmosphereLighting = true
         viewer.scene.globe.dynamicAtmosphereLightingFromSun = true
-      } catch {
-        // Property may not exist on all build variants.
-      }
+      } catch { /* not available on this build */ }
 
-      // Boost atmosphere scattering intensity (Cesium 1.100+).
       try {
         viewer.scene.globe.atmosphereLightIntensity = 10.0
         viewer.scene.globe.atmosphereRayleighCoefficient = new Cesium.Cartesian3(
           5.5e-6, 13.0e-6, 28.4e-6
         )
-      } catch {
-        // Silently skip if not available in this build.
-      }
+      } catch { /* Cesium < 1.100 */ }
 
-      // ── Post-processing ─────────────────────────────────────────────────────
-      // FXAA: smooths satellite dot and cone edges at minimal GPU cost.
-      try {
-        viewer.scene.postProcessStages.fxaa.enabled = true
-      } catch {
-        // Ignore if post-process pipeline is unavailable.
-      }
+      // ── Post-processing ───────────────────────────────────────────────────────
+      // FXAA only — bloom over 10 k glowing dots costs ~15 ms/frame on a mid-range GPU.
+      try { viewer.scene.postProcessStages.fxaa.enabled = true } catch { /* ignore */ }
+      // Bloom is intentionally disabled for performance.
+      try { viewer.scene.postProcessStages.bloom.enabled = false } catch { /* ignore */ }
 
-      // Bloom: makes the atmosphere limb and bright satellites glow.
-      try {
-        const bloom = viewer.scene.postProcessStages.bloom
-        bloom.enabled = true
-        bloom.uniforms.glowOnly = false
-        bloom.uniforms.contrast = 128
-        bloom.uniforms.brightness = -0.3
-        bloom.uniforms.delta = 1.0
-        bloom.uniforms.sigma = 3.78
-        bloom.uniforms.stepSize = 5.0
-      } catch {
-        // Bloom may not be available in all environments (e.g. no WebGL2).
-      }
-
-      // ── Camera ──────────────────────────────────────────────────────────────
-      // 22,000 km altitude gives the globe breathing room against black space.
+      // ── Camera ───────────────────────────────────────────────────────────────
       viewer.camera.setView({
         destination: Cesium.Cartesian3.fromDegrees(80.24, 12.97, 22_000_000),
         orientation: {
@@ -207,19 +187,14 @@ export default function CelestialGlobe() {
         },
       })
 
-      // ── Zenith cone ─────────────────────────────────────────────────────────
-      // High-contrast cyan reads against both ocean and land on photorealistic imagery.
+      // ── Zenith cone ───────────────────────────────────────────────────────────
       const renderCone = (show: boolean) => {
         viewer.entities.removeById('zenith-cone')
         const apex = Cesium.Cartesian3.fromDegrees(
-          observer.longitude,
-          observer.latitude,
-          observer.altitudeM
+          observer.longitude, observer.latitude, observer.altitudeM
         )
         const center = Cesium.Cartesian3.fromDegrees(
-          observer.longitude,
-          observer.latitude,
-          observer.altitudeM + CONE_LENGTH / 2
+          observer.longitude, observer.latitude, observer.altitudeM + CONE_LENGTH / 2
         )
         const enu = Cesium.Transforms.eastNorthUpToFixedFrame(apex)
         const rotation = Cesium.Matrix4.getMatrix3(enu, new Cesium.Matrix3())
@@ -231,19 +206,43 @@ export default function CelestialGlobe() {
           orientation,
           cylinder: {
             length: CONE_LENGTH,
-            topRadius: CONE_RADIUS,
-            bottomRadius: 0,
-            material: new Cesium.ColorMaterialProperty(
-              Cesium.Color.fromCssColorString('#00d4ff').withAlpha(0.18)
-            ),
+            topRadius: 0,
+            bottomRadius: CONE_RADIUS,
+            material: new Cesium.ColorMaterialProperty(C!.coneBody),
             outline: true,
-            outlineColor: Cesium.Color.fromCssColorString('#00d4ff').withAlpha(0.7),
+            outlineColor: C!.coneOutline,
             outlineWidth: 2,
           },
         })
       }
 
       renderCone(useZenithStore.getState().showZenithCone)
+
+      // ── Observer marker ───────────────────────────────────────────────────────
+      viewer.entities.add({
+        id: '__observer_dot__',
+        position: Cesium.Cartesian3.fromDegrees(observer.longitude, observer.latitude, 2000),
+        point: {
+          pixelSize: 12,
+          color: C!.obsDotFill,
+          outlineColor: C!.dotOutlineWh,
+          outlineWidth: 2,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        },
+      })
+
+      viewer.entities.add({
+        id: '__observer_ring__',
+        position: Cesium.Cartesian3.fromDegrees(observer.longitude, observer.latitude, 1000),
+        ellipse: {
+          semiMajorAxis: 250000,
+          semiMinorAxis: 250000,
+          material: C!.obsRingBody,
+          outline: true,
+          outlineColor: C!.obsRingOL,
+          outlineWidth: 2,
+        },
+      })
 
       const unsubCone = useZenithStore.subscribe(
         (s) => s.showZenithCone,
@@ -254,20 +253,18 @@ export default function CelestialGlobe() {
       )
       unsubs.push(unsubCone)
 
-      // ── Delta satellite entity sync ──────────────────────────────────────────
-      // Maintains a Map<id, EntityCacheEntry> mirroring Cesium's entity collection.
-      // Each tick: addSample() on existing entities (smooth interpolation via
-      // SampledPositionProperty), add new ones, remove stale ones.
-      // Never rebuilds the full entity set — avoids the O(n) stutter every 10s.
+      // Scratch JulianDate reused across ticks — addSample copies before we mutate it again.
+      const scratchT1 = new Cesium.JulianDate()
+
+      // ── Delta satellite entity sync ───────────────────────────────────────────
+      // Deferred to the next animation frame so the Zustand notify → syncEntities
+      // path never blocks the render thread mid-frame.
       const syncEntities = (objects: Map<string, CelestialObject>) => {
         if (!viewer || viewer.isDestroyed()) return
 
-        // Remove entities no longer in the catalogue.
-        const cesiumIds: string[] = []
-        const vals = viewer.entities.values
-        for (let i = 0; i < vals.length; i++) cesiumIds.push(vals[i].id as string)
-        for (const id of cesiumIds) {
-          if (id === 'zenith-cone') continue
+        // Remove stale entities using entityCache (O(cache size)) instead of
+        // iterating viewer.entities.values (O(Cesium entity count)).
+        for (const id of entityCache.keys()) {
           if (!objects.has(id)) {
             viewer.entities.removeById(id)
             entityCache.delete(id)
@@ -279,18 +276,15 @@ export default function CelestialGlobe() {
 
         for (const obj of objects.values()) {
           const pos0 = Cesium.Cartesian3.fromDegrees(
-            obj.geo.longitude,
-            obj.geo.latitude,
-            obj.geo.heightKm * 1000
+            obj.geo.longitude, obj.geo.latitude, obj.geo.heightKm * 1000
           )
 
           if (entityCache.has(obj.id)) {
-            // ── Update existing entity ───────────────────────────────────────
             const cache = entityCache.get(obj.id)!
             cache.tickCount++
 
-            // Recycle SampledPositionProperty every N ticks to cap memory usage.
             let posProp = cache.posProp
+            // Recycle SampledPositionProperty every N ticks to bound memory.
             if (cache.tickCount % MAX_SAMPLES_PER_TICK === 0) {
               posProp = new Cesium.SampledPositionProperty()
               posProp.setInterpolationOptions({
@@ -305,28 +299,26 @@ export default function CelestialGlobe() {
             }
 
             posProp.addSample(t0, pos0)
+
             if (obj.geoNext) {
-              const intervalSec =
-                (obj.updatedAt
-                  ? new Date(obj.updatedAt + 10_000).getTime() - nowDate.getTime()
-                  : 10_000) / 1000
-              const t1 = Cesium.JulianDate.addSeconds(t0, intervalSec, new Cesium.JulianDate())
+              const intervalSec = (obj.updatedAt
+                ? new Date(obj.updatedAt + 10_000).getTime() - nowDate.getTime()
+                : 10_000) / 1000
+              // scratchT1 is mutated in place; addSample copies it before we reuse it.
+              Cesium.JulianDate.addSeconds(t0, intervalSec, scratchT1)
               posProp.addSample(
-                t1,
+                scratchT1,
                 Cesium.Cartesian3.fromDegrees(
-                  obj.geoNext.longitude,
-                  obj.geoNext.latitude,
-                  obj.geoNext.heightKm * 1000
+                  obj.geoNext.longitude, obj.geoNext.latitude, obj.geoNext.heightKm * 1000
                 )
               )
             }
 
-            // Only mutate Cesium graphics when zenith membership changes.
             if (cache.inZenithWindow !== obj.inZenithWindow) {
               cache.inZenithWindow = obj.inZenithWindow
               const entity = viewer.entities.getById(obj.id)
               if (entity?.point) {
-                const style = getPointStyle(Cesium, obj.category, obj.inZenithWindow)
+                const style = getPointStyle(obj.category, obj.inZenithWindow)
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 ;(entity.point.pixelSize as any).setValue(style.pixelSize)
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -342,7 +334,6 @@ export default function CelestialGlobe() {
               }
             }
           } else {
-            // ── Add new entity ───────────────────────────────────────────────
             const posProp = new Cesium.SampledPositionProperty()
             posProp.setInterpolationOptions({
               interpolationDegree: 1,
@@ -353,18 +344,16 @@ export default function CelestialGlobe() {
             posProp.addSample(t0, pos0)
 
             if (obj.geoNext) {
-              const t1 = Cesium.JulianDate.addSeconds(t0, 10, new Cesium.JulianDate())
+              Cesium.JulianDate.addSeconds(t0, 10, scratchT1)
               posProp.addSample(
-                t1,
+                scratchT1,
                 Cesium.Cartesian3.fromDegrees(
-                  obj.geoNext.longitude,
-                  obj.geoNext.latitude,
-                  obj.geoNext.heightKm * 1000
+                  obj.geoNext.longitude, obj.geoNext.latitude, obj.geoNext.heightKm * 1000
                 )
               )
             }
 
-            const style = getPointStyle(Cesium, obj.category, obj.inZenithWindow)
+            const style = getPointStyle(obj.category, obj.inZenithWindow)
             viewer.entities.add({
               id: obj.id,
               name: obj.name,
@@ -379,8 +368,8 @@ export default function CelestialGlobe() {
                 text: obj.name,
                 show: obj.inZenithWindow,
                 font: '11px monospace',
-                fillColor: Cesium.Color.WHITE,
-                outlineColor: Cesium.Color.BLACK,
+                fillColor: C!.labelFill,
+                outlineColor: C!.labelOutline,
                 outlineWidth: 2,
                 style: Cesium.LabelStyle.FILL_AND_OUTLINE,
                 verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
@@ -388,22 +377,32 @@ export default function CelestialGlobe() {
               },
             })
 
-            entityCache.set(obj.id, {
-              posProp,
-              inZenithWindow: obj.inZenithWindow,
-              tickCount: 0,
-            })
+            entityCache.set(obj.id, { posProp, inZenithWindow: obj.inZenithWindow, tickCount: 0 })
           }
         }
       }
 
+      // Initial sync runs immediately (no RAF — viewer just initialised, nothing to block).
       syncEntities(useZenithStore.getState().objects)
-      const unsubObjects = useZenithStore.subscribe((s) => s.objects, syncEntities)
+
+      // Subsequent updates are deferred to the next animation frame so the
+      // Zustand → syncEntities path never stalls Cesium mid-render.
+      const unsubObjects = useZenithStore.subscribe(
+        (s) => s.objects,
+        (objects) => {
+          if (pendingSyncRaf) return // already queued, skip
+          pendingSyncRaf = requestAnimationFrame(() => {
+            pendingSyncRaf = 0
+            syncEntities(objects)
+          })
+        }
+      )
       unsubs.push(unsubObjects)
     })
 
     return () => {
       cancelled = true
+      if (pendingSyncRaf) { cancelAnimationFrame(pendingSyncRaf); pendingSyncRaf = 0 }
       unsubs.forEach((u) => u())
       entityCache.clear()
       if (viewer && !viewer.isDestroyed()) viewer.destroy()

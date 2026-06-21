@@ -13,12 +13,19 @@ import { eciToEcef, ecefToGeodetic, geodeticToTopocentric } from './coordTransfo
 import { ZENITH_WINDOW } from '../types/celestial'
 import type { CelestialCategory, CelestialObject, GeoPosition } from '../types/celestial'
 
-interface TLEEntry {
+export interface TLEEntry {
   name: string
   line1: string
   line2: string
 }
 
+/** Push fresh TLEs into the worker (sent by refreshLoop when its cache refreshes). */
+export interface TleMessage {
+  type: 'tle'
+  satellites: TLEEntry[]
+}
+
+/** Ask the worker to propagate its stored TLEs for `observer` at the current time. */
 export interface TickMessage {
   type: 'tick'
   observer: { latitude: number; longitude: number; altitudeM: number }
@@ -26,39 +33,32 @@ export interface TickMessage {
   intervalMs: number
 }
 
+export type WorkerInMessage = TleMessage | TickMessage
+
 export type WorkerOutMessage =
   | { type: 'result'; objects: CelestialObject[] }
   | { type: 'error'; message: string }
   | { type: 'loading'; value: boolean }
 
-// Stale-while-revalidate TLE cache inside the worker.
-let cachedSatellites: TLEEntry[] = []
-let cacheExpiry = 0
-
-async function fetchTLEs(): Promise<TLEEntry[]> {
-  const now = Date.now()
-  if (cachedSatellites.length > 0 && now < cacheExpiry) return cachedSatellites
-  const res = await fetch('/api/tle')
-  if (!res.ok) throw new Error(`TLE API responded ${res.status}`)
-  const data = await res.json()
-  if (data.error) throw new Error(data.error)
-  cachedSatellites = data.satellites as TLEEntry[]
-  cacheExpiry = now + 5 * 60 * 1000
-  return cachedSatellites
-}
+// TLEs are fetched + cached on the main thread (refreshLoop owns that so it can
+// use localStorage and survive CelesTrak rate limits). They're pushed in here via
+// a 'tle' message and held so each 'tick' only propagates — the worker performs
+// no network I/O, so the 502 path never reaches it.
+let satellites: TLEEntry[] = []
 
 function categorize(name: string): CelestialCategory {
   const upper = name.toUpperCase()
   return upper.includes('ISS') || upper.includes('ZARYA') ? 'iss' : 'satellite'
 }
 
-async function processTick(
+function processTick(
   observer: { latitude: number; longitude: number; altitudeM: number },
   intervalMs: number
-): Promise<void> {
+): void {
   self.postMessage({ type: 'loading', value: true } satisfies WorkerOutMessage)
   try {
-    const tles = await fetchTLEs()
+    const tles = satellites
+    if (tles.length === 0) throw new Error('No TLE data loaded yet')
     const now = new Date()
     const nowNext = new Date(now.getTime() + intervalMs)
     const gmst = satellite.gstime(now)
@@ -113,8 +113,11 @@ async function processTick(
   }
 }
 
-self.addEventListener('message', (e: MessageEvent<TickMessage>) => {
-  if (e.data.type === 'tick') {
-    void processTick(e.data.observer, e.data.intervalMs)
+self.addEventListener('message', (e: MessageEvent<WorkerInMessage>) => {
+  const msg = e.data
+  if (msg.type === 'tle') {
+    satellites = msg.satellites
+  } else if (msg.type === 'tick') {
+    processTick(msg.observer, msg.intervalMs)
   }
 })

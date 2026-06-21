@@ -5,15 +5,17 @@ import TopBar from '@/components/TopBar'
 import ZenithWindow from '@/components/ZenithWindow'
 import DevSeedButton from '@/components/DevSeedButton'
 import GlobeWrapper from '@/components/GlobeWrapper'
-import { startPipeline } from '@/lib/pipelineWorker'
+import RadarOverlay from '@/components/RadarOverlay'
+import { startRefreshLoop } from '@/lib/refreshLoop'
+import { useZenithStore } from '@/store/zenithStore'
 
 export default function Home() {
   const [showDev, setShowDev] = useState(false)
 
   // Real-time data pipeline: starts on mount, cleans up on unmount.
   useEffect(() => {
-    const stop = startPipeline()
-    return stop
+    const stopRefreshLoop = startRefreshLoop(useZenithStore)
+    return stopRefreshLoop
   }, [])
 
   // DevSeedButton is no longer auto-shown — opt in with ?dev=true.
@@ -26,6 +28,7 @@ export default function Home() {
       <TopBar />
       <div className="relative flex-1 overflow-hidden">
         <GlobeWrapper />
+        <RadarOverlay />
         <ZenithWindow />
         {showDev && <DevSeedButton />}
       </div>

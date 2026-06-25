@@ -110,3 +110,52 @@ body {
 
 @keyframes floaty { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-12px); } }
 .astro-float { animation: floaty 6s ease-in-out infinite; }
+
+/* ── Constellation detail panel (components/ConstellationPanel.tsx) ─────────── */
+/* fadeSlideIn from the bottom — translateY 10px → 0 (Part 6). Distinct keyframe
+   from the ZenithWindow list's translateX fadeSlideIn so neither affects the other. */
+@keyframes constellationPanelIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.constellation-panel-in { animation: constellationPanelIn 0.3s ease-out forwards; }
+
+/* ── TopBar nav (components/TopBar.tsx) ────────────────────────────────────── */
+/* Continuous diagonal "shine" sweep for the Constellations CTA. A translucent
+   highlight glides across the pill, pauses, repeats — drawing the eye without
+   being noisy. Clipped by the pill via overflow:hidden on .nav-shine. */
+@keyframes navShineSweep {
+  0%   { transform: translateX(-130%) skewX(-20deg); }
+  55%  { transform: translateX(320%) skewX(-20deg); }
+  100% { transform: translateX(320%) skewX(-20deg); }
+}
+.nav-shine { position: relative; overflow: hidden; }
+.nav-shine::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 38%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.55),
+    transparent
+  );
+  transform: translateX(-130%) skewX(-20deg);
+  animation: navShineSweep 3.4s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* Soft breathing glow so the CTA reads as "alive" even between shine sweeps. */
+@keyframes navCtaGlow {
+  0%, 100% { box-shadow: 0 0 9px rgba(56, 189, 248, 0.35), 0 0 22px rgba(139, 92, 246, 0.18); }
+  50%      { box-shadow: 0 0 18px rgba(56, 189, 248, 0.7), 0 0 34px rgba(139, 92, 246, 0.4); }
+}
+.nav-cta-glow { animation: navCtaGlow 2.8s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-shine::after { animation: none; opacity: 0; }
+  .nav-cta-glow { animation: none; }
+}

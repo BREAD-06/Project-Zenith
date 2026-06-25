@@ -175,6 +175,33 @@ export default function ObjectDetailPanel() {
                 </>
               ) : (
                 <>
+                  {/* View in 3D — only for satellites/ISS currently in the cone
+                      (zenith window). Stays available while tracking so the same
+                      button can toggle the view back off. Toggling trackingObjectId
+                      drives the camera lock + 3D model in CelestialGlobe. */}
+                  {(data.category === 'satellite' || data.category === 'iss') &&
+                    (data.inZenithWindow || isTracking) && (
+                      <div className="px-5 pt-4">
+                        <button
+                          onClick={() =>
+                            setTrackingObjectId(isTracking ? null : data.id)
+                          }
+                          className={`w-full rounded-lg px-3 py-2 text-sm font-medium transition-all duration-150 ${
+                            isTracking
+                              ? 'bg-red-500/15 text-red-300 border border-red-500/40 hover:bg-red-500/25'
+                              : 'bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 hover:bg-cyan-500/30'
+                          }`}
+                        >
+                          {isTracking ? '↩ Exit 3D view' : '🛰 View satellite in 3D'}
+                        </button>
+                        {!isTracking && (
+                          <p className="mt-2 text-[10px] text-slate-500 text-center leading-tight">
+                            ⏳ 3D model may take a few seconds to render
+                          </p>
+                        )}
+                      </div>
+                    )}
+
                   {/* Live topocentric + geodetic readouts */}
                   <dl className="grid grid-cols-2 gap-x-4 gap-y-3 px-5 py-4">
                     <Field label="Altitude" value={`${data.topo.altitude.toFixed(2)}°`} />

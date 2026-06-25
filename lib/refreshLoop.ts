@@ -4,7 +4,13 @@ import type { ZenithStore } from '@/store/zenithStore'
 import type { TLEEntry, TleMessage, TickMessage, WorkerOutMessage } from './sgp4Worker'
 import { geodeticToTopocentric } from './coordTransforms'
 
-const DEFAULT_INTERVAL_MS = 10_000
+// ── Loop cadences ────────────────────────────────────────────────────────────
+/** How often the simulation re-propagates positions (seconds). */
+const SIM_INTERVAL_MS = 10_000
+
+/** How often we check if fresh TLEs are needed (minutes). TLEs barely change —
+ *  CelesTrak updates a few times per day — so 15 min is more than enough. */
+const TLE_REFRESH_INTERVAL_MS = 15 * 60 * 1000
 
 // Planets are now rendered as a 3D solar system (lib/solarSystem.ts) orbiting the
 // globe, so the old NASA-Horizons "sky point near Earth" planets are disabled to
@@ -12,18 +18,26 @@ const DEFAULT_INTERVAL_MS = 10_000
 // true to restore the geocentric Horizons sky points instead.
 const USE_HORIZONS_PLANETS = false
 
-// TLE cache lives on the main thread (localStorage is unavailable in a Worker).
+// ── Client-side TLE cache ────────────────────────────────────────────────────
+// localStorage cache survives page reloads. The in-memory `memTLE` mirror gives
+// a stable reference within the TTL so TLEs are only re-posted to the worker
+// when they actually change.
 const TLE_CACHE_KEY = 'zenith_tle_cache'
-const TLE_TTL_MS = 2 * 60 * 60 * 1000 // 2 hours — matches CelesTrak's update cadence.
-const RETRY_DELAY_MS = 10_000 // Wait this long before retrying a 502.
+const TLE_TTL_MS = 15 * 60 * 1000 // Must match TLE_REFRESH_INTERVAL_MS.
+
+/** Client-side fetch timeout — if the server hasn't responded in 8 s the user
+ *  already thinks something is broken, so abort and use cached data. */
+const CLIENT_FETCH_TIMEOUT_MS = 8_000
+
+/** Time Machine slider debounce — short enough to feel instant, long enough to
+ *  batch rapid drags into one propagation. */
+const SLIDER_DEBOUNCE_MS = 75
 
 interface TLECacheEntry {
   data: TLEEntry[]
   timestamp: number
 }
 
-// Mirror of the localStorage entry. Gives a stable array reference within the
-// TTL so we only re-post TLEs to the worker when they actually change.
 let memTLE: TLECacheEntry | null = null
 
 function readLocalCache(): TLECacheEntry | null {
@@ -44,15 +58,30 @@ function writeLocalCache(entry: TLECacheEntry): void {
   try {
     localStorage.setItem(TLE_CACHE_KEY, JSON.stringify(entry))
   } catch {
-    // Quota exceeded or unavailable (e.g. SSR) — caching is best-effort.
+    // Quota exceeded or unavailable — caching is best-effort.
   }
 }
 
-const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+// ── Exponential backoff for TLE fetch failures ───────────────────────────────
+const BACKOFF_STEPS = [1_000, 2_000, 5_000, 10_000, 30_000, 60_000, 5 * 60_000]
+let backoffIndex = 0
+let backoffHandle: ReturnType<typeof setTimeout> | null = null
 
-/** Fetch TLEs from our server route. Attaches the HTTP status so 502s can be handled. */
+function resetBackoff() {
+  backoffIndex = 0
+  if (backoffHandle) {
+    clearTimeout(backoffHandle)
+    backoffHandle = null
+  }
+}
+
+// ── TLE fetch (client → /api/tle) ────────────────────────────────────────────
+
+/** Fetch TLEs from our server route with a client-side timeout. */
 async function fetchTLEsOnce(): Promise<TLEEntry[]> {
-  const res = await fetch('/api/tle')
+  const res = await fetch('/api/tle', {
+    signal: AbortSignal.timeout(CLIENT_FETCH_TIMEOUT_MS),
+  })
   if (!res.ok) {
     const err = new Error(`TLE API responded ${res.status}`) as Error & { status?: number }
     err.status = res.status
@@ -64,10 +93,9 @@ async function fetchTLEsOnce(): Promise<TLEEntry[]> {
 }
 
 /**
- * Return TLEs, served from the 2-hour localStorage cache when fresh so we never
- * hit CelesTrak more than once per update cycle. On a 502 we wait 10 s and retry
- * once; if that also fails we fall back to any cached (even stale) TLEs rather
- * than failing the tick.
+ * Return TLEs from the client-side cache, refreshing from the server only when
+ * the cache is stale. On failure, falls back to any cached (even stale) TLEs
+ * rather than crashing the tick.
  */
 async function getTLEs(): Promise<TLEEntry[]> {
   const now = Date.now()
@@ -83,22 +111,15 @@ async function getTLEs(): Promise<TLEEntry[]> {
     const entry: TLECacheEntry = { data, timestamp: Date.now() }
     memTLE = entry
     writeLocalCache(entry)
+    resetBackoff()
     return data
   }
 
   try {
     return store(await fetchTLEsOnce())
   } catch (err) {
-    if ((err as { status?: number }).status === 502) {
-      console.warn(`[refreshLoop] /api/tle 502 — retrying in ${RETRY_DELAY_MS / 1000}s`)
-      await delay(RETRY_DELAY_MS)
-      try {
-        return store(await fetchTLEsOnce())
-      } catch {
-        /* fall through to stale cache below */
-      }
-    }
-    // Serve a stale cache if we have one rather than failing the whole tick.
+    console.warn('[refreshLoop] TLE fetch failed:', err)
+    // Serve a stale cache if we have one rather than failing.
     if (cached) {
       memTLE = cached
       return cached.data
@@ -107,6 +128,8 @@ async function getTLEs(): Promise<TLEEntry[]> {
     throw err
   }
 }
+
+// ── ISS live overlay ─────────────────────────────────────────────────────────
 
 /** Live ISS position shape returned by our /api/iss route (OpenNotify-fed). */
 interface ISSLivePosition {
@@ -179,6 +202,8 @@ async function promoteISS(
   return objects
 }
 
+// ── Planet fetching (disabled by default) ────────────────────────────────────
+
 /** Planet entry shape returned by our /api/planets route (NASA Horizons-fed). */
 interface PlanetApiObject {
   id: string
@@ -234,6 +259,8 @@ async function fetchPlanetObjects(
   }
 }
 
+// ── Worker communication ─────────────────────────────────────────────────────
+
 /**
  * Ask the worker to propagate its currently-loaded TLEs for `observer` and
  * resolve with the propagated CelestialObject[]. Rejects if the worker errors.
@@ -270,19 +297,34 @@ function runPropagation(
   })
 }
 
+// ── Main entry point ─────────────────────────────────────────────────────────
+
 /**
- * Start the real-time refresh loop. Every `intervalMs` it loads TLEs (from the
- * 2-hour localStorage cache or CelesTrak), hands them to the SGP4 worker for
- * propagation, and pushes the fresh positions into the store via `upsertObjects`.
- * A failed cycle is logged and skipped — it never crashes the loop. Returns a
- * `stopRefreshLoop` cleanup that clears the interval and terminates the worker.
+ * Start the real-time refresh loops. Two independent loops run concurrently:
+ *
+ *  **Loop A — TLE Refresh** (every 15 min):
+ *    Fetches fresh TLEs from /api/tle and pushes them to the worker. This is the
+ *    only loop that touches the network. On failure it uses exponential backoff
+ *    (1 s → 5 min) and falls back to cached data.
+ *
+ *  **Loop B — Simulation** (every 10 s):
+ *    Propagates the worker's cached TLEs for the current observer + time offset.
+ *    Zero network calls. Also overlays the ISS live position (skipped during
+ *    Time Machine mode). Skips ticks when `simulationActive === false`.
+ *
+ *  **Time Machine slider** (75 ms debounce):
+ *    On offset change, immediately re-propagates using the worker's cached TLEs.
+ *    No network calls, no ISS overlay. Cancel-on-supersede via a generation
+ *    counter so only the latest slider position renders.
+ *
+ * Returns a `stopRefreshLoop` cleanup that tears everything down.
  *
  * @param store      The Zustand store instance (dependency-injected).
- * @param intervalMs Refresh cadence in milliseconds (default 10 000).
+ * @param intervalMs Simulation cadence in milliseconds (default 10 000).
  */
 export function startRefreshLoop(
   store: ZenithStore,
-  intervalMs: number = DEFAULT_INTERVAL_MS
+  intervalMs: number = SIM_INTERVAL_MS
 ): () => void {
   let worker: Worker
   try {
@@ -294,32 +336,81 @@ export function startRefreshLoop(
   }
 
   let stopped = false
-  // Guard against a slow tick (e.g. a 502 retry) overlapping the next interval.
-  let inFlight = false
+
   // The TLE array reference last sent to the worker — only re-send on change.
   let lastSentTLE: TLEEntry[] | null = null
-  // Debounce handle for Time Machine: fire immediately when offset changes
-  // rather than waiting up to 10s for the next scheduled tick.
-  let timeMachineDebounce: ReturnType<typeof setTimeout> | null = null
 
-  const tick = async () => {
-    if (stopped || inFlight) return
-    inFlight = true
+  // Guard against simulation ticks overlapping (e.g. a slow propagation).
+  let simInFlight = false
 
-    const { observer, offsetHours, upsertObjects, setDataLoading, setLastError } = store.getState()
-    setDataLoading(true)
+  // ── Generation counter for Time Machine cancel-on-supersede ──────────────
+  // Each slider event increments this. When a propagation result arrives, if
+  // its generation doesn't match `sliderGen`, it's discarded — only the most
+  // recent slider position renders.
+  let sliderGen = 0
+
+  // Debounce handle for Time Machine slider.
+  let sliderDebounce: ReturnType<typeof setTimeout> | null = null
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Loop A — TLE Refresh (background, every 15 min)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Push fresh TLEs to the worker if the cache is stale. On failure, schedule
+   * an exponential-backoff retry. Never blocks the simulation loop.
+   */
+  const tleTick = async () => {
+    if (stopped) return
+    // Respect the simulationActive flag — don't fetch when paused.
+    if (!store.getState().simulationActive) return
+
     try {
-      // 1. Load TLEs (cached or freshly fetched, with 502 retry).
       const tles = await getTLEs()
       if (stopped) return
 
-      // Push TLEs to the worker only when they change (i.e. on a fresh fetch).
+      // Push TLEs to the worker only when they actually change.
       if (tles !== lastSentTLE) {
         worker.postMessage({ type: 'tle', satellites: tles } satisfies TleMessage)
         lastSentTLE = tles
       }
+    } catch (err) {
+      console.error('[refreshLoop] TLE refresh failed:', err)
+      store.getState().setLastError(err instanceof Error ? err.message : String(err))
 
-      // 2. Propagate in the worker → updated CelestialObject[].
+      // Schedule an exponential-backoff retry.
+      if (!stopped) {
+        const delayMs = BACKOFF_STEPS[Math.min(backoffIndex, BACKOFF_STEPS.length - 1)]
+        backoffIndex++
+        console.warn(`[refreshLoop] TLE retry in ${delayMs / 1000}s (backoff #${backoffIndex})`)
+        backoffHandle = setTimeout(() => {
+          backoffHandle = null
+          void tleTick()
+        }, delayMs)
+      }
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Loop B — Simulation (every 10 s, zero network)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Propagate the worker's cached TLEs for the current observer + time offset.
+   * Overlays the live ISS position (skipped when Time Machine is active).
+   * No network calls to /api/tle — the worker already has everything.
+   */
+  const simTick = async () => {
+    if (stopped || simInFlight) return
+    // Sleep mode: skip ticks but keep the worker alive.
+    if (!store.getState().simulationActive) return
+
+    simInFlight = true
+    const { observer, offsetHours, upsertObjects, setDataLoading, setLastError } = store.getState()
+    setDataLoading(true)
+
+    try {
+      // Propagate in the worker → updated CelestialObject[].
       const updatedObjects = await runPropagation(
         worker,
         {
@@ -332,12 +423,15 @@ export function startRefreshLoop(
       )
       if (stopped) return
 
-      // 2b. Overlay the ISS with its live OpenNotify position (best-effort) and
-      // ensure it's categorised 'iss'. Never drops the ISS on failure.
-      await promoteISS(updatedObjects, observer)
-      if (stopped) return
+      // Overlay the ISS with its live OpenNotify position — but only when
+      // viewing "now" (offset 0). In Time Machine mode the ISS's current
+      // real position is irrelevant.
+      if (offsetHours === 0) {
+        await promoteISS(updatedObjects, observer)
+        if (stopped) return
+      }
 
-      // 2c. Append planets from NASA Horizons (best-effort — skipped on failure).
+      // Append planets from NASA Horizons (best-effort — skipped on failure).
       // Disabled by default — planets are drawn by the 3D solar-system module now.
       if (USE_HORIZONS_PLANETS) {
         const planets = await fetchPlanetObjects(observer, Date.now())
@@ -345,41 +439,91 @@ export function startRefreshLoop(
         updatedObjects.push(...planets)
       }
 
-      // 3. Push the new positions into the store.
+      // Push the new positions into the store.
       upsertObjects(updatedObjects)
       setLastError(null)
     } catch (err) {
       // Never crash the loop — log the error and skip this tick.
-      console.error('[refreshLoop] tick failed, skipping:', err)
+      console.error('[refreshLoop] sim tick failed, skipping:', err)
       setLastError(err instanceof Error ? err.message : String(err))
     } finally {
-      inFlight = false
+      simInFlight = false
       if (!stopped) setDataLoading(false)
     }
   }
 
-  void tick()
-  const handle = setInterval(() => void tick(), intervalMs)
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Time Machine — instant re-propagation (75 ms debounce, no network)
+  // ═══════════════════════════════════════════════════════════════════════════
 
-  // When the user drags the Time Machine slider, kick off a fresh propagation
-  // immediately (debounced 300ms) so the globe responds without waiting up to
-  // 10 s for the next scheduled tick.
+  /**
+   * When the Time Machine slider moves, propagate using the worker's cached
+   * TLEs at the new time offset. No network calls, no ISS overlay, no planet
+   * fetch. Cancel-on-supersede ensures only the latest slider value renders.
+   */
+  const sliderTick = async (gen: number) => {
+    if (stopped) return
+
+    const { observer, offsetHours, upsertObjects, setDataLoading } = store.getState()
+    setDataLoading(true)
+
+    try {
+      const updatedObjects = await runPropagation(
+        worker,
+        {
+          latitude: observer.latitude,
+          longitude: observer.longitude,
+          altitudeM: observer.altitudeM,
+        },
+        intervalMs,
+        offsetHours * 3_600_000
+      )
+      if (stopped) return
+
+      // Cancel-on-supersede: discard if a newer slider event already fired.
+      if (gen !== sliderGen) return
+
+      upsertObjects(updatedObjects)
+    } catch (err) {
+      console.error('[refreshLoop] slider propagation failed:', err)
+    } finally {
+      if (!stopped) setDataLoading(false)
+    }
+  }
+
+  // ── Subscribe to Time Machine offset changes ──────────────────────────────
   const unsubOffset = store.subscribe(
     (s) => s.offsetHours,
     () => {
       if (stopped) return
-      if (timeMachineDebounce) clearTimeout(timeMachineDebounce)
-      timeMachineDebounce = setTimeout(() => {
-        timeMachineDebounce = null
-        void tick()
-      }, 300)
+      if (sliderDebounce) clearTimeout(sliderDebounce)
+      const gen = ++sliderGen
+      sliderDebounce = setTimeout(() => {
+        sliderDebounce = null
+        void sliderTick(gen)
+      }, SLIDER_DEBOUNCE_MS)
     }
   )
 
+  // ── Kick off both loops ────────────────────────────────────────────────────
+
+  // 1. TLE refresh: fetch immediately, then every 15 min.
+  void tleTick()
+  const tleHandle = setInterval(() => void tleTick(), TLE_REFRESH_INTERVAL_MS)
+
+  // 2. Simulation: first tick after a short delay to give the TLE fetch a
+  //    chance to complete, then every 10 s.
+  const firstSimDelay = setTimeout(() => void simTick(), 2_000)
+  const simHandle = setInterval(() => void simTick(), intervalMs)
+
+  // ── Cleanup ────────────────────────────────────────────────────────────────
   return function stopRefreshLoop() {
     stopped = true
-    clearInterval(handle)
-    if (timeMachineDebounce) clearTimeout(timeMachineDebounce)
+    clearInterval(tleHandle)
+    clearInterval(simHandle)
+    clearTimeout(firstSimDelay)
+    if (sliderDebounce) clearTimeout(sliderDebounce)
+    resetBackoff()
     unsubOffset()
     worker.terminate()
   }

@@ -49,9 +49,9 @@ const SELECTED_VIEW_FROM: [number, number, number] = [0, -1.0e6, 5.0e5]
 
 // Opening camera view — MUST match CelestialGlobe's initial setView so exiting a
 // body returns the globe to exactly how it looked when the site loaded.
-const HOME_VIEW_LON = 80.24
-const HOME_VIEW_LAT = 12.97
-const HOME_VIEW_HEIGHT = 22_000_000
+export const HOME_VIEW_LON = 80.24
+export const HOME_VIEW_LAT = 12.97
+export const HOME_VIEW_HEIGHT = 22_000_000
 
 const TWO_PI = Math.PI * 2
 

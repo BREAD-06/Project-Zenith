@@ -9,10 +9,13 @@ const SOURCES = [
   'https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=tle',
 ]
 
-// 2-hour TTL — CelesTrak refreshes element sets a few times a day, so polling
-// more often than this just risks the rate limit. The client (refreshLoop) also
-// caches in localStorage, so CelesTrak is hit at most once per cycle.
-const CACHE_TTL_MS = 2 * 60 * 60 * 1000
+// Staleness threshold: once the cache is older than this we trigger a background
+// refresh on the next request. The cached data is still returned immediately
+// (stale-while-revalidate) so the client never waits.
+const CACHE_TTL_MS = 15 * 60 * 1000 // 15 minutes
+
+// Hard timeout for CelesTrak fetches — fail fast instead of hanging.
+const FETCH_TIMEOUT_MS = 15_000
 
 export const dynamic = 'force-dynamic'
 
@@ -35,6 +38,9 @@ let cache: { at: number; data: TLEPayload } | null = null
 // drop out of the merged catalogue.
 const feedCache = new Map<string, TLEEntry[]>()
 
+// Guard: only one background refresh at a time.
+let bgRefreshInFlight = false
+
 /** Parse raw CelesTrak TLE text (name line, line 1, line 2, repeating). */
 function parseTLEText(text: string): TLEEntry[] {
   const lines = text
@@ -54,64 +60,99 @@ function parseTLEText(text: string): TLEEntry[] {
   return entries
 }
 
+/**
+ * Fetch all SOURCES, merge, de-duplicate, and return the TLE payload.
+ * Throws if every source fails and no per-feed fallback is available.
+ */
+async function fetchAndMergeTLEs(): Promise<TLEPayload> {
+  const results = await Promise.all(
+    SOURCES.map(async (url) => {
+      try {
+        const r = await fetch(url, {
+          cache: 'no-store',
+          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+          headers: { 'User-Agent': 'ProjectZenith/1.0 (Aaruush celestial tracker)' },
+        })
+        if (!r.ok) return { url, entries: null as TLEEntry[] | null }
+        const parsed = parseTLEText(await r.text())
+        return { url, entries: parsed.length > 0 ? parsed : null }
+      } catch {
+        return { url, entries: null as TLEEntry[] | null }
+      }
+    })
+  )
+
+  // Use each feed's fresh entries, falling back to its last-good cache when
+  // CelesTrak throttles it (empty/non-TLE response).
+  const perFeed: TLEEntry[][] = []
+  for (const { url, entries } of results) {
+    if (entries) {
+      feedCache.set(url, entries)
+      perFeed.push(entries)
+    } else {
+      const last = feedCache.get(url)
+      if (last) perFeed.push(last)
+    }
+  }
+  if (perFeed.length === 0) {
+    throw new Error('All CelesTrak sources failed')
+  }
+
+  // Merge all feeds, de-duplicating by satellite name.
+  const seen = new Set<string>()
+  const satellites: TLEEntry[] = []
+  for (const entries of perFeed) {
+    for (const entry of entries) {
+      if (seen.has(entry.name)) continue
+      seen.add(entry.name)
+      satellites.push(entry)
+    }
+  }
+
+  return { satellites }
+}
+
+/**
+ * Non-blocking background refresh: fetches fresh TLEs and silently updates the
+ * server-side cache. If the fetch fails, the existing cache is kept — the error
+ * is only logged, never surfaced to the client.
+ */
+function triggerBackgroundRefresh(): void {
+  if (bgRefreshInFlight) return
+  bgRefreshInFlight = true
+
+  fetchAndMergeTLEs()
+    .then((data) => {
+      cache = { at: Date.now(), data }
+    })
+    .catch((err) => {
+      // Keep the existing (stale) cache — the client never sees this error.
+      console.warn('[api/tle] Background refresh failed, keeping stale cache:', err)
+    })
+    .finally(() => {
+      bgRefreshInFlight = false
+    })
+}
+
 export async function GET() {
-  if (cache && Date.now() - cache.at < CACHE_TTL_MS) {
+  // ── Stale-while-revalidate ────────────────────────────────────────────────
+  // If we have ANY cached data, return it immediately. If it's stale, kick off
+  // a non-blocking background refresh so the *next* request gets fresh data.
+  // The client never waits on CelesTrak.
+  if (cache) {
+    if (Date.now() - cache.at >= CACHE_TTL_MS) {
+      triggerBackgroundRefresh()
+    }
     return NextResponse.json(cache.data)
   }
 
+  // ── Cold start (no cache at all) ──────────────────────────────────────────
+  // This is the only path that blocks. Happens once on first server boot.
   try {
-    // Fetch every feed in parallel; parse each independently.
-    const results = await Promise.all(
-      SOURCES.map(async (url) => {
-        try {
-          const r = await fetch(url, {
-            cache: 'no-store',
-            headers: { 'User-Agent': 'ProjectZenith/1.0 (Aaruush celestial tracker)' },
-          })
-          if (!r.ok) return { url, entries: null as TLEEntry[] | null }
-          const parsed = parseTLEText(await r.text())
-          return { url, entries: parsed.length > 0 ? parsed : null }
-        } catch {
-          return { url, entries: null as TLEEntry[] | null }
-        }
-      })
-    )
-
-    // Use each feed's fresh entries, falling back to its last-good cache when
-    // CelesTrak throttles it (empty/non-TLE response).
-    const perFeed: TLEEntry[][] = []
-    for (const { url, entries } of results) {
-      if (entries) {
-        feedCache.set(url, entries)
-        perFeed.push(entries)
-      } else {
-        const last = feedCache.get(url)
-        if (last) perFeed.push(last)
-      }
-    }
-    if (perFeed.length === 0) {
-      throw new Error('All CelesTrak sources failed')
-    }
-
-    // Merge all feeds, de-duplicating by satellite name.
-    const seen = new Set<string>()
-    const satellites: TLEEntry[] = []
-    for (const entries of perFeed) {
-      for (const entry of entries) {
-        if (seen.has(entry.name)) continue
-        seen.add(entry.name)
-        satellites.push(entry)
-      }
-    }
-
-    const data: TLEPayload = { satellites }
+    const data = await fetchAndMergeTLEs()
     cache = { at: Date.now(), data }
     return NextResponse.json(data)
   } catch (err) {
-    // Fall back to stale cache if the upstream fetch fails.
-    if (cache) {
-      return NextResponse.json(cache.data)
-    }
     const message = err instanceof Error ? err.message : 'Unknown error'
     return NextResponse.json({ satellites: [], error: message }, { status: 502 })
   }

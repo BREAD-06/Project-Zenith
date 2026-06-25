@@ -1,0 +1,557 @@
+/**
+ * Constellation catalogue for the standalone /constellations viewer.
+ *
+ * The 20 most prominent constellations, each with its bright pattern stars
+ * (RA/Dec in DEGREES, magnitude) and the stick-figure line connections that
+ * join them. Coordinates are real J2000 values from the Hipparcos / Yale Bright
+ * Star Catalogue, rounded to 2 d.p. — accurate enough to place stars correctly
+ * on Cesium's celestial sphere.
+ *
+ * Magnitude policy: bright stars (mag < 4.0) only, EXCEPT where a constellation's
+ * canonical asterism needs a slightly fainter star to stay recognisable (e.g.
+ * the Little Dipper's bowl, Cancer's "donkeys", the faint zodiac figures). Those
+ * pattern stars are kept so every stick figure draws as a complete shape.
+ *
+ * This file is data-only: no Cesium imports, so it's safe to use from anywhere.
+ */
+
+export interface ConstellationStar {
+  id: string
+  name: string
+  /** Right ascension in degrees (0–360). */
+  ra: number
+  /** Declination in degrees (−90 to +90). */
+  dec: number
+  /** Apparent visual magnitude (lower = brighter). */
+  magnitude: number
+}
+
+export interface ConstellationData {
+  id: string
+  name: string
+  abbreviation: string
+  stars: ConstellationStar[]
+  /** Pairs of star ids to connect with a line (the stick figure). */
+  lines: Array<[string, string]>
+  /** RA of the constellation centre, degrees. */
+  centerRa: number
+  /** Dec of the constellation centre, degrees. */
+  centerDec: number
+  /** One-sentence mythology / description. */
+  mythology: string
+}
+
+export const CONSTELLATIONS: ConstellationData[] = [
+  {
+    id: 'orion',
+    name: 'Orion',
+    abbreviation: 'Ori',
+    stars: [
+      { id: 'betelgeuse', name: 'Betelgeuse', ra: 88.79, dec: 7.41, magnitude: 0.42 },
+      { id: 'rigel', name: 'Rigel', ra: 78.63, dec: -8.2, magnitude: 0.18 },
+      { id: 'bellatrix', name: 'Bellatrix', ra: 81.28, dec: 6.35, magnitude: 1.64 },
+      { id: 'mintaka', name: 'Mintaka', ra: 83.0, dec: -0.3, magnitude: 2.23 },
+      { id: 'alnilam', name: 'Alnilam', ra: 84.05, dec: -1.2, magnitude: 1.69 },
+      { id: 'alnitak', name: 'Alnitak', ra: 85.19, dec: -1.94, magnitude: 1.77 },
+      { id: 'saiph', name: 'Saiph', ra: 86.94, dec: -9.67, magnitude: 2.07 },
+      { id: 'meissa', name: 'Meissa', ra: 83.78, dec: 9.93, magnitude: 3.39 },
+    ],
+    lines: [
+      ['betelgeuse', 'bellatrix'],
+      ['betelgeuse', 'alnitak'],
+      ['bellatrix', 'mintaka'],
+      ['mintaka', 'alnilam'],
+      ['alnilam', 'alnitak'],
+      ['mintaka', 'rigel'],
+      ['alnitak', 'saiph'],
+      ['rigel', 'saiph'],
+      ['betelgeuse', 'meissa'],
+      ['bellatrix', 'meissa'],
+    ],
+    centerRa: 83.0,
+    centerDec: 0.0,
+    mythology: 'The Hunter, a giant of Greek myth who boasted he could slay any beast, immortalised with his belt of three stars.',
+  },
+  {
+    id: 'ursa-major',
+    name: 'Ursa Major',
+    abbreviation: 'UMa',
+    stars: [
+      { id: 'dubhe', name: 'Dubhe', ra: 165.93, dec: 61.75, magnitude: 1.79 },
+      { id: 'merak', name: 'Merak', ra: 165.46, dec: 56.38, magnitude: 2.37 },
+      { id: 'phecda', name: 'Phecda', ra: 178.46, dec: 53.69, magnitude: 2.44 },
+      { id: 'megrez', name: 'Megrez', ra: 183.86, dec: 57.03, magnitude: 3.31 },
+      { id: 'alioth', name: 'Alioth', ra: 193.51, dec: 55.96, magnitude: 1.77 },
+      { id: 'mizar', name: 'Mizar', ra: 200.98, dec: 54.93, magnitude: 2.27 },
+      { id: 'alkaid', name: 'Alkaid', ra: 206.89, dec: 49.31, magnitude: 1.86 },
+    ],
+    lines: [
+      ['dubhe', 'merak'],
+      ['merak', 'phecda'],
+      ['phecda', 'megrez'],
+      ['megrez', 'dubhe'],
+      ['megrez', 'alioth'],
+      ['alioth', 'mizar'],
+      ['mizar', 'alkaid'],
+    ],
+    centerRa: 185.0,
+    centerDec: 55.0,
+    mythology: 'The Great Bear, whose seven brightest stars form the Big Dipper used for centuries to find the North Star.',
+  },
+  {
+    id: 'ursa-minor',
+    name: 'Ursa Minor',
+    abbreviation: 'UMi',
+    stars: [
+      { id: 'polaris', name: 'Polaris', ra: 37.95, dec: 89.26, magnitude: 1.98 },
+      { id: 'yildun', name: 'Yildun', ra: 263.05, dec: 86.59, magnitude: 4.36 },
+      { id: 'epsilon-umi', name: 'Epsilon UMi', ra: 251.49, dec: 82.04, magnitude: 4.21 },
+      { id: 'zeta-umi', name: 'Zeta UMi', ra: 236.01, dec: 77.79, magnitude: 4.29 },
+      { id: 'kochab', name: 'Kochab', ra: 222.68, dec: 74.16, magnitude: 2.08 },
+      { id: 'pherkad', name: 'Pherkad', ra: 230.18, dec: 71.83, magnitude: 3.05 },
+      { id: 'eta-umi', name: 'Eta UMi', ra: 244.38, dec: 75.76, magnitude: 4.95 },
+    ],
+    lines: [
+      ['polaris', 'yildun'],
+      ['yildun', 'epsilon-umi'],
+      ['epsilon-umi', 'zeta-umi'],
+      ['zeta-umi', 'eta-umi'],
+      ['eta-umi', 'kochab'],
+      ['kochab', 'pherkad'],
+      ['pherkad', 'zeta-umi'],
+    ],
+    centerRa: 240.0,
+    centerDec: 80.0,
+    mythology: 'The Little Bear, holding Polaris at the tip of its tail — the pole star that marks true north.',
+  },
+  {
+    id: 'cassiopeia',
+    name: 'Cassiopeia',
+    abbreviation: 'Cas',
+    stars: [
+      { id: 'caph', name: 'Caph', ra: 2.29, dec: 59.15, magnitude: 2.28 },
+      { id: 'schedar', name: 'Schedar', ra: 10.13, dec: 56.54, magnitude: 2.24 },
+      { id: 'gamma-cas', name: 'Gamma Cas', ra: 14.18, dec: 60.72, magnitude: 2.47 },
+      { id: 'ruchbah', name: 'Ruchbah', ra: 21.45, dec: 60.24, magnitude: 2.68 },
+      { id: 'segin', name: 'Segin', ra: 28.6, dec: 63.67, magnitude: 3.38 },
+    ],
+    lines: [
+      ['caph', 'schedar'],
+      ['schedar', 'gamma-cas'],
+      ['gamma-cas', 'ruchbah'],
+      ['ruchbah', 'segin'],
+    ],
+    centerRa: 13.0,
+    centerDec: 60.0,
+    mythology: 'The vain queen of Aethiopia, set in the sky on her throne tracing a distinctive W (or M) shape.',
+  },
+  {
+    id: 'leo',
+    name: 'Leo',
+    abbreviation: 'Leo',
+    stars: [
+      { id: 'regulus', name: 'Regulus', ra: 152.09, dec: 11.97, magnitude: 1.4 },
+      { id: 'eta-leo', name: 'Eta Leo', ra: 151.83, dec: 16.76, magnitude: 3.48 },
+      { id: 'algieba', name: 'Algieba', ra: 154.99, dec: 19.84, magnitude: 2.08 },
+      { id: 'mu-leo', name: 'Rasalas', ra: 148.19, dec: 26.01, magnitude: 3.88 },
+      { id: 'epsilon-leo', name: 'Ras Elased', ra: 146.46, dec: 23.77, magnitude: 2.98 },
+      { id: 'zosma', name: 'Zosma', ra: 168.53, dec: 20.52, magnitude: 2.56 },
+      { id: 'chertan', name: 'Chertan', ra: 168.56, dec: 15.43, magnitude: 3.34 },
+      { id: 'denebola', name: 'Denebola', ra: 177.26, dec: 14.57, magnitude: 2.14 },
+    ],
+    lines: [
+      ['regulus', 'eta-leo'],
+      ['eta-leo', 'algieba'],
+      ['algieba', 'mu-leo'],
+      ['mu-leo', 'epsilon-leo'],
+      ['algieba', 'zosma'],
+      ['zosma', 'denebola'],
+      ['denebola', 'chertan'],
+      ['chertan', 'regulus'],
+      ['chertan', 'zosma'],
+    ],
+    centerRa: 159.0,
+    centerDec: 17.0,
+    mythology: 'The Lion slain by Heracles as the first of his twelve labours, its hide impervious to weapons.',
+  },
+  {
+    id: 'scorpius',
+    name: 'Scorpius',
+    abbreviation: 'Sco',
+    stars: [
+      { id: 'graffias', name: 'Graffias', ra: 241.36, dec: -19.81, magnitude: 2.62 },
+      { id: 'dschubba', name: 'Dschubba', ra: 240.08, dec: -22.62, magnitude: 2.29 },
+      { id: 'pi-sco', name: 'Pi Sco', ra: 239.71, dec: -26.11, magnitude: 2.89 },
+      { id: 'antares', name: 'Antares', ra: 247.35, dec: -26.43, magnitude: 1.06 },
+      { id: 'tau-sco', name: 'Tau Sco', ra: 248.97, dec: -28.22, magnitude: 2.82 },
+      { id: 'epsilon-sco', name: 'Epsilon Sco', ra: 252.97, dec: -34.29, magnitude: 2.29 },
+      { id: 'mu-sco', name: 'Mu Sco', ra: 253.84, dec: -38.05, magnitude: 3.0 },
+      { id: 'zeta-sco', name: 'Zeta Sco', ra: 254.66, dec: -42.36, magnitude: 3.62 },
+      { id: 'eta-sco', name: 'Eta Sco', ra: 258.04, dec: -43.24, magnitude: 3.33 },
+      { id: 'sargas', name: 'Sargas', ra: 264.33, dec: -42.99, magnitude: 1.87 },
+      { id: 'iota-sco', name: 'Iota Sco', ra: 266.9, dec: -40.13, magnitude: 3.03 },
+      { id: 'shaula', name: 'Shaula', ra: 263.4, dec: -37.1, magnitude: 1.62 },
+      { id: 'lesath', name: 'Lesath', ra: 262.69, dec: -37.3, magnitude: 2.69 },
+    ],
+    lines: [
+      ['graffias', 'dschubba'],
+      ['dschubba', 'pi-sco'],
+      ['dschubba', 'antares'],
+      ['antares', 'tau-sco'],
+      ['tau-sco', 'epsilon-sco'],
+      ['epsilon-sco', 'mu-sco'],
+      ['mu-sco', 'zeta-sco'],
+      ['zeta-sco', 'eta-sco'],
+      ['eta-sco', 'sargas'],
+      ['sargas', 'iota-sco'],
+      ['iota-sco', 'shaula'],
+      ['shaula', 'lesath'],
+    ],
+    centerRa: 255.0,
+    centerDec: -32.0,
+    mythology: 'The Scorpion sent by Gaia to kill Orion, placed opposite him so they never share the sky.',
+  },
+  {
+    id: 'taurus',
+    name: 'Taurus',
+    abbreviation: 'Tau',
+    stars: [
+      { id: 'aldebaran', name: 'Aldebaran', ra: 68.98, dec: 16.51, magnitude: 0.85 },
+      { id: 'elnath', name: 'Elnath', ra: 81.57, dec: 28.61, magnitude: 1.65 },
+      { id: 'gamma-tau', name: 'Gamma Tau', ra: 64.95, dec: 15.63, magnitude: 3.65 },
+      { id: 'epsilon-tau', name: 'Epsilon Tau', ra: 67.15, dec: 19.18, magnitude: 3.53 },
+      { id: 'lambda-tau', name: 'Lambda Tau', ra: 60.17, dec: 12.49, magnitude: 3.47 },
+      { id: 'zeta-tau', name: 'Zeta Tau', ra: 84.41, dec: 21.14, magnitude: 3.0 },
+    ],
+    lines: [
+      ['lambda-tau', 'gamma-tau'],
+      ['gamma-tau', 'aldebaran'],
+      ['aldebaran', 'epsilon-tau'],
+      ['epsilon-tau', 'elnath'],
+      ['aldebaran', 'zeta-tau'],
+    ],
+    centerRa: 68.0,
+    centerDec: 18.0,
+    mythology: 'The Bull, the form Zeus took to carry off Europa across the sea, its face marked by the Hyades cluster.',
+  },
+  {
+    id: 'gemini',
+    name: 'Gemini',
+    abbreviation: 'Gem',
+    stars: [
+      { id: 'pollux', name: 'Pollux', ra: 116.33, dec: 28.03, magnitude: 1.14 },
+      { id: 'castor', name: 'Castor', ra: 113.65, dec: 31.89, magnitude: 1.58 },
+      { id: 'alhena', name: 'Alhena', ra: 99.43, dec: 16.4, magnitude: 1.93 },
+      { id: 'tejat', name: 'Tejat', ra: 95.74, dec: 22.51, magnitude: 2.87 },
+      { id: 'mebsuta', name: 'Mebsuta', ra: 100.98, dec: 25.13, magnitude: 2.98 },
+      { id: 'eta-gem', name: 'Propus', ra: 93.72, dec: 22.51, magnitude: 3.28 },
+      { id: 'delta-gem', name: 'Wasat', ra: 110.03, dec: 21.98, magnitude: 3.53 },
+      { id: 'lambda-gem', name: 'Lambda Gem', ra: 109.52, dec: 16.54, magnitude: 3.58 },
+      { id: 'xi-gem', name: 'Alzirr', ra: 101.32, dec: 12.9, magnitude: 3.35 },
+      { id: 'kappa-gem', name: 'Kappa Gem', ra: 116.11, dec: 24.4, magnitude: 3.57 },
+    ],
+    lines: [
+      ['castor', 'pollux'],
+      ['castor', 'tejat'],
+      ['tejat', 'eta-gem'],
+      ['tejat', 'mebsuta'],
+      ['mebsuta', 'alhena'],
+      ['pollux', 'kappa-gem'],
+      ['kappa-gem', 'delta-gem'],
+      ['delta-gem', 'lambda-gem'],
+      ['lambda-gem', 'xi-gem'],
+      ['delta-gem', 'alhena'],
+    ],
+    centerRa: 107.0,
+    centerDec: 22.0,
+    mythology: 'The Twins Castor and Pollux, inseparable brothers of Greek legend set side by side among the stars.',
+  },
+  {
+    id: 'cancer',
+    name: 'Cancer',
+    abbreviation: 'Cnc',
+    stars: [
+      { id: 'altarf', name: 'Altarf', ra: 124.13, dec: 9.19, magnitude: 3.53 },
+      { id: 'asellus-australis', name: 'Asellus Australis', ra: 131.17, dec: 18.15, magnitude: 3.94 },
+      { id: 'asellus-borealis', name: 'Asellus Borealis', ra: 130.82, dec: 21.47, magnitude: 4.66 },
+      { id: 'iota-cnc', name: 'Iota Cnc', ra: 131.67, dec: 28.76, magnitude: 4.02 },
+      { id: 'acubens', name: 'Acubens', ra: 134.62, dec: 11.86, magnitude: 4.25 },
+    ],
+    lines: [
+      ['iota-cnc', 'asellus-borealis'],
+      ['asellus-borealis', 'asellus-australis'],
+      ['asellus-australis', 'altarf'],
+      ['asellus-australis', 'acubens'],
+    ],
+    centerRa: 130.0,
+    centerDec: 18.0,
+    mythology: 'The Crab sent by Hera to distract Heracles during his battle with the Hydra, crushed underfoot for its trouble.',
+  },
+  {
+    id: 'virgo',
+    name: 'Virgo',
+    abbreviation: 'Vir',
+    stars: [
+      { id: 'spica', name: 'Spica', ra: 201.3, dec: -11.16, magnitude: 0.98 },
+      { id: 'zavijava', name: 'Zavijava', ra: 177.67, dec: 1.76, magnitude: 3.6 },
+      { id: 'zaniah', name: 'Zaniah', ra: 184.98, dec: -0.67, magnitude: 3.89 },
+      { id: 'porrima', name: 'Porrima', ra: 190.42, dec: -1.45, magnitude: 2.74 },
+      { id: 'delta-vir', name: 'Minelauva', ra: 193.9, dec: 3.4, magnitude: 3.39 },
+      { id: 'vindemiatrix', name: 'Vindemiatrix', ra: 195.54, dec: 10.96, magnitude: 2.83 },
+      { id: 'heze', name: 'Heze', ra: 203.67, dec: -0.6, magnitude: 3.38 },
+    ],
+    lines: [
+      ['vindemiatrix', 'delta-vir'],
+      ['delta-vir', 'porrima'],
+      ['porrima', 'zaniah'],
+      ['zaniah', 'zavijava'],
+      ['delta-vir', 'heze'],
+      ['heze', 'spica'],
+      ['porrima', 'spica'],
+    ],
+    centerRa: 192.0,
+    centerDec: -1.0,
+    mythology: 'The Maiden, often identified with Demeter or Astraea, holding the wheat ear marked by the star Spica.',
+  },
+  {
+    id: 'sagittarius',
+    name: 'Sagittarius',
+    abbreviation: 'Sgr',
+    stars: [
+      { id: 'alnasl', name: 'Alnasl', ra: 271.45, dec: -30.42, magnitude: 2.99 },
+      { id: 'kaus-media', name: 'Kaus Media', ra: 275.25, dec: -29.83, magnitude: 2.7 },
+      { id: 'kaus-australis', name: 'Kaus Australis', ra: 276.04, dec: -34.38, magnitude: 1.85 },
+      { id: 'kaus-borealis', name: 'Kaus Borealis', ra: 276.99, dec: -25.42, magnitude: 2.81 },
+      { id: 'phi-sgr', name: 'Phi Sgr', ra: 281.41, dec: -26.99, magnitude: 3.17 },
+      { id: 'nunki', name: 'Nunki', ra: 283.82, dec: -26.3, magnitude: 2.05 },
+      { id: 'tau-sgr', name: 'Tau Sgr', ra: 286.17, dec: -27.67, magnitude: 3.32 },
+      { id: 'ascella', name: 'Ascella', ra: 285.65, dec: -29.88, magnitude: 2.6 },
+    ],
+    lines: [
+      ['alnasl', 'kaus-media'],
+      ['kaus-media', 'kaus-australis'],
+      ['kaus-media', 'kaus-borealis'],
+      ['kaus-borealis', 'phi-sgr'],
+      ['phi-sgr', 'nunki'],
+      ['nunki', 'tau-sgr'],
+      ['tau-sgr', 'ascella'],
+      ['ascella', 'kaus-australis'],
+      ['ascella', 'phi-sgr'],
+    ],
+    centerRa: 280.0,
+    centerDec: -28.0,
+    mythology: 'The Archer, a centaur drawing his bow, whose brightest stars form the unmistakable Teapot asterism.',
+  },
+  {
+    id: 'aquarius',
+    name: 'Aquarius',
+    abbreviation: 'Aqr',
+    stars: [
+      { id: 'sadalsuud', name: 'Sadalsuud', ra: 322.89, dec: -5.57, magnitude: 2.9 },
+      { id: 'sadalmelik', name: 'Sadalmelik', ra: 331.45, dec: -0.32, magnitude: 2.95 },
+      { id: 'sadachbia', name: 'Sadachbia', ra: 335.41, dec: -1.39, magnitude: 3.84 },
+      { id: 'zeta-aqr', name: 'Zeta Aqr', ra: 337.21, dec: -0.02, magnitude: 3.65 },
+      { id: 'eta-aqr', name: 'Eta Aqr', ra: 338.84, dec: -0.12, magnitude: 4.04 },
+      { id: 'lambda-aqr', name: 'Lambda Aqr', ra: 343.15, dec: -7.58, magnitude: 3.74 },
+      { id: 'skat', name: 'Skat', ra: 343.66, dec: -15.82, magnitude: 3.27 },
+    ],
+    lines: [
+      ['sadalsuud', 'sadalmelik'],
+      ['sadalmelik', 'sadachbia'],
+      ['sadachbia', 'zeta-aqr'],
+      ['zeta-aqr', 'eta-aqr'],
+      ['sadalmelik', 'lambda-aqr'],
+      ['lambda-aqr', 'skat'],
+    ],
+    centerRa: 334.0,
+    centerDec: -5.0,
+    mythology: 'The Water Bearer, the youth Ganymede carried to Olympus by Zeus to serve as cupbearer to the gods.',
+  },
+  {
+    id: 'capricornus',
+    name: 'Capricornus',
+    abbreviation: 'Cap',
+    stars: [
+      { id: 'algedi', name: 'Algedi', ra: 304.51, dec: -12.54, magnitude: 3.57 },
+      { id: 'dabih', name: 'Dabih', ra: 305.25, dec: -14.78, magnitude: 3.05 },
+      { id: 'psi-cap', name: 'Psi Cap', ra: 311.52, dec: -25.27, magnitude: 4.13 },
+      { id: 'omega-cap', name: 'Omega Cap', ra: 312.96, dec: -26.92, magnitude: 4.11 },
+      { id: 'zeta-cap', name: 'Zeta Cap', ra: 321.67, dec: -22.41, magnitude: 3.74 },
+      { id: 'deneb-algedi', name: 'Deneb Algedi', ra: 326.76, dec: -16.13, magnitude: 2.85 },
+      { id: 'nashira', name: 'Nashira', ra: 325.02, dec: -16.66, magnitude: 3.68 },
+    ],
+    lines: [
+      ['algedi', 'dabih'],
+      ['dabih', 'omega-cap'],
+      ['omega-cap', 'psi-cap'],
+      ['omega-cap', 'zeta-cap'],
+      ['zeta-cap', 'deneb-algedi'],
+      ['deneb-algedi', 'nashira'],
+      ['nashira', 'algedi'],
+    ],
+    centerRa: 315.0,
+    centerDec: -19.0,
+    mythology: 'The Sea Goat, linked to the god Pan who leapt into a river and grew a fish tail to escape the monster Typhon.',
+  },
+  {
+    id: 'pisces',
+    name: 'Pisces',
+    abbreviation: 'Psc',
+    stars: [
+      { id: 'alrescha', name: 'Alrescha', ra: 30.51, dec: 2.76, magnitude: 3.82 },
+      { id: 'eta-psc', name: 'Alpherg', ra: 22.87, dec: 15.35, magnitude: 3.62 },
+      { id: 'omicron-psc', name: 'Torcular', ra: 26.6, dec: 9.16, magnitude: 4.26 },
+      { id: 'gamma-psc', name: 'Gamma Psc', ra: 349.29, dec: 3.28, magnitude: 3.7 },
+      { id: 'iota-psc', name: 'Iota Psc', ra: 352.96, dec: 5.49, magnitude: 4.13 },
+      { id: 'omega-psc', name: 'Omega Psc', ra: 359.83, dec: 6.86, magnitude: 4.01 },
+    ],
+    lines: [
+      ['alrescha', 'omicron-psc'],
+      ['omicron-psc', 'eta-psc'],
+      ['alrescha', 'omega-psc'],
+      ['omega-psc', 'iota-psc'],
+      ['iota-psc', 'gamma-psc'],
+    ],
+    centerRa: 10.0,
+    centerDec: 8.0,
+    mythology: 'The Fishes, into which Aphrodite and Eros transformed to flee Typhon, tied together so they would not be parted.',
+  },
+  {
+    id: 'aries',
+    name: 'Aries',
+    abbreviation: 'Ari',
+    stars: [
+      { id: 'hamal', name: 'Hamal', ra: 31.79, dec: 23.46, magnitude: 2.01 },
+      { id: 'sheratan', name: 'Sheratan', ra: 28.66, dec: 20.81, magnitude: 2.64 },
+      { id: 'mesarthim', name: 'Mesarthim', ra: 28.38, dec: 19.29, magnitude: 3.86 },
+      { id: 'bharani', name: 'Bharani', ra: 42.67, dec: 27.26, magnitude: 3.61 },
+    ],
+    lines: [
+      ['hamal', 'sheratan'],
+      ['sheratan', 'mesarthim'],
+      ['hamal', 'bharani'],
+    ],
+    centerRa: 33.0,
+    centerDec: 22.0,
+    mythology: 'The Ram whose golden fleece was the prize sought by Jason and the Argonauts.',
+  },
+  {
+    id: 'perseus',
+    name: 'Perseus',
+    abbreviation: 'Per',
+    stars: [
+      { id: 'mirfak', name: 'Mirfak', ra: 51.08, dec: 49.86, magnitude: 1.79 },
+      { id: 'algol', name: 'Algol', ra: 47.04, dec: 40.96, magnitude: 2.12 },
+      { id: 'gamma-per', name: 'Gamma Per', ra: 46.2, dec: 53.51, magnitude: 2.93 },
+      { id: 'delta-per', name: 'Delta Per', ra: 55.73, dec: 47.79, magnitude: 3.01 },
+      { id: 'epsilon-per', name: 'Epsilon Per', ra: 59.46, dec: 40.01, magnitude: 2.89 },
+      { id: 'zeta-per', name: 'Zeta Per', ra: 58.53, dec: 31.88, magnitude: 2.85 },
+      { id: 'rho-per', name: 'Rho Per', ra: 46.51, dec: 38.84, magnitude: 3.39 },
+    ],
+    lines: [
+      ['gamma-per', 'mirfak'],
+      ['mirfak', 'delta-per'],
+      ['delta-per', 'epsilon-per'],
+      ['epsilon-per', 'zeta-per'],
+      ['mirfak', 'algol'],
+      ['algol', 'rho-per'],
+    ],
+    centerRa: 52.0,
+    centerDec: 45.0,
+    mythology: 'The Hero who slew the Gorgon Medusa, holding her severed head marked by the winking demon star Algol.',
+  },
+  {
+    id: 'andromeda',
+    name: 'Andromeda',
+    abbreviation: 'And',
+    stars: [
+      { id: 'alpheratz', name: 'Alpheratz', ra: 2.1, dec: 29.09, magnitude: 2.06 },
+      { id: 'delta-and', name: 'Delta And', ra: 9.83, dec: 30.86, magnitude: 3.27 },
+      { id: 'mirach', name: 'Mirach', ra: 17.43, dec: 35.62, magnitude: 2.05 },
+      { id: 'mu-and', name: 'Mu And', ra: 14.19, dec: 38.5, magnitude: 3.86 },
+      { id: 'almach', name: 'Almach', ra: 30.97, dec: 42.33, magnitude: 2.1 },
+    ],
+    lines: [
+      ['alpheratz', 'delta-and'],
+      ['delta-and', 'mirach'],
+      ['mirach', 'almach'],
+      ['mirach', 'mu-and'],
+    ],
+    centerRa: 13.0,
+    centerDec: 36.0,
+    mythology: 'The Chained Princess, daughter of Cassiopeia, left as a sacrifice to a sea monster and rescued by Perseus.',
+  },
+  {
+    id: 'cygnus',
+    name: 'Cygnus',
+    abbreviation: 'Cyg',
+    stars: [
+      { id: 'deneb', name: 'Deneb', ra: 310.36, dec: 45.28, magnitude: 1.25 },
+      { id: 'sadr', name: 'Sadr', ra: 305.56, dec: 40.26, magnitude: 2.23 },
+      { id: 'gienah-cyg', name: 'Gienah', ra: 311.55, dec: 33.97, magnitude: 2.48 },
+      { id: 'delta-cyg', name: 'Delta Cyg', ra: 296.24, dec: 45.13, magnitude: 2.87 },
+      { id: 'albireo', name: 'Albireo', ra: 292.68, dec: 27.96, magnitude: 3.18 },
+    ],
+    lines: [
+      ['deneb', 'sadr'],
+      ['sadr', 'albireo'],
+      ['delta-cyg', 'sadr'],
+      ['sadr', 'gienah-cyg'],
+    ],
+    centerRa: 305.0,
+    centerDec: 40.0,
+    mythology: 'The Swan flying down the Milky Way, the disguise Zeus wore to woo Leda; its bright stars form the Northern Cross.',
+  },
+  {
+    id: 'lyra',
+    name: 'Lyra',
+    abbreviation: 'Lyr',
+    stars: [
+      { id: 'vega', name: 'Vega', ra: 279.23, dec: 38.78, magnitude: 0.03 },
+      { id: 'zeta-lyr', name: 'Zeta Lyr', ra: 281.19, dec: 37.61, magnitude: 4.34 },
+      { id: 'sheliak', name: 'Sheliak', ra: 282.52, dec: 33.36, magnitude: 3.45 },
+      { id: 'sulafat', name: 'Sulafat', ra: 284.74, dec: 32.69, magnitude: 3.24 },
+      { id: 'delta-lyr', name: 'Delta Lyr', ra: 283.63, dec: 36.9, magnitude: 4.3 },
+    ],
+    lines: [
+      ['vega', 'zeta-lyr'],
+      ['zeta-lyr', 'sheliak'],
+      ['sheliak', 'sulafat'],
+      ['sulafat', 'delta-lyr'],
+      ['delta-lyr', 'zeta-lyr'],
+    ],
+    centerRa: 282.0,
+    centerDec: 36.0,
+    mythology: 'The Lyre of Orpheus, whose music could charm all living things; its star Vega is one of the brightest in the sky.',
+  },
+  {
+    id: 'aquila',
+    name: 'Aquila',
+    abbreviation: 'Aql',
+    stars: [
+      { id: 'altair', name: 'Altair', ra: 297.7, dec: 8.87, magnitude: 0.76 },
+      { id: 'tarazed', name: 'Tarazed', ra: 296.56, dec: 10.61, magnitude: 2.72 },
+      { id: 'alshain', name: 'Alshain', ra: 298.83, dec: 6.41, magnitude: 3.71 },
+      { id: 'zeta-aql', name: 'Zeta Aql', ra: 286.35, dec: 13.86, magnitude: 2.99 },
+      { id: 'delta-aql', name: 'Delta Aql', ra: 291.37, dec: 3.11, magnitude: 3.36 },
+      { id: 'theta-aql', name: 'Theta Aql', ra: 302.83, dec: -0.82, magnitude: 3.23 },
+      { id: 'lambda-aql', name: 'Lambda Aql', ra: 286.56, dec: -4.88, magnitude: 3.43 },
+    ],
+    lines: [
+      ['tarazed', 'altair'],
+      ['altair', 'alshain'],
+      ['zeta-aql', 'altair'],
+      ['altair', 'theta-aql'],
+      ['altair', 'delta-aql'],
+      ['delta-aql', 'lambda-aql'],
+    ],
+    centerRa: 297.0,
+    centerDec: 5.0,
+    mythology: 'The Eagle that carried the thunderbolts of Zeus and bore the youth Ganymede up to Mount Olympus.',
+  },
+]
+
+/** Lookup a constellation by its id. */
+export function getConstellationById(id: string): ConstellationData | undefined {
+  return CONSTELLATIONS.find((c) => c.id === id)
+}

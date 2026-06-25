@@ -3,6 +3,7 @@
 import { useEffect, useRef } from 'react'
 import { useZenithStore } from '@/store/zenithStore'
 import type { CelestialObject } from '@/types/celestial'
+import { initSolarSystem, HOME_VIEW_LON, HOME_VIEW_LAT, HOME_VIEW_HEIGHT } from '@/lib/solarSystem'
 
 const CONE_LENGTH = 2_000_000
 // Half-angle of 15° represents the 75°–90° zenith shell: an object at 75°
@@ -11,6 +12,26 @@ const CONE_RADIUS = Math.round(CONE_LENGTH * Math.tan((15 * Math.PI) / 180))
 // ── Orbital trail ring buffer ─────────────────────────────────────────────────
 // Max samples kept per trail object for its glow polyline (oldest shifted off).
 const TRAIL_LENGTH = 8
+
+// ── 3D tracking models ────────────────────────────────────────────────────────
+// The ISS gets its own dedicated model; every other satellite opens one of these
+// (chosen deterministically by id, so each satellite keeps a consistent but
+// varied look instead of everyone sharing one model). Files live in /public/models.
+const SAT_MODEL_URIS = [
+  '/models/satellite.glb',
+  '/models/satellite1.glb',
+  '/models/satellite2.glb',
+  '/models/satellite3.glb',
+  '/models/satellite4.glb',
+  '/models/satellite5.glb',
+  '/models/satellite6.glb',
+  '/models/satellite7.glb',
+]
+function pickSatelliteModel(id: string): string {
+  let h = 0
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0
+  return SAT_MODEL_URIS[h % SAT_MODEL_URIS.length]
+}
 
 // ── Pre-built Color cache ─────────────────────────────────────────────────────
 // Populated once after Cesium loads so getPointStyle never parses CSS strings
@@ -137,8 +158,12 @@ export default function CelestialGlobe() {
     let cancelled = false
     // rAF handle so we never queue more than one sync per frame.
     let pendingSyncRaf = 0
-    // Safety timer so the landing's LAUNCH button never stays disabled forever.
-    let readyTimeout: ReturnType<typeof setTimeout> | null = null
+    let readyTimeout: any = null
+    // ── Positional Animation State ───────────────────────────────────────────
+    // Smoothly interpolates satellites to their new positions (lat/lon/alt)
+    // over a few frames so they visually glide across the globe.
+    let twRaf = 0
+    const TW_SPEED = 0.15 // 15% interpolation per frame
 
     // Batched render primitives (created once after viewer init). One collection
     // each for all points / labels / trails instead of ~750 individual entities.
@@ -278,21 +303,24 @@ export default function CelestialGlobe() {
       try { viewer.scene.postProcessStages.bloom.enabled = false } catch { /* ignore */ }
 
       // ── Camera intro ───────────────────────────────────────────────────────────
-      // Start from a high orbit looking straight down…
+      // Start fully zoomed out so the entire globe is visible with breathing room.
       viewer.camera.setView({
-        destination: Cesium.Cartesian3.fromDegrees(80.2437, 12.9716, 15_000_000),
+        destination: Cesium.Cartesian3.fromDegrees(HOME_VIEW_LON, HOME_VIEW_LAT, 30_000_000),
         orientation: { heading: 0, pitch: Cesium.Math.toRadians(-90), roll: 0 },
       })
 
-      // …then fly down to the default observer (Chennai) for a cinematic intro.
-      // Small delay so Cesium finishes initial tile loading before the flight.
+      // …then gently settle to the home view (~22 000 km up — still the whole
+      // globe in frame, just a touch closer). Small delay so the opening tiles
+      // finish loading before the flight.
       const introTimeout = setTimeout(() => {
         if (cancelled || !viewer || viewer.isDestroyed()) return
         viewer.camera.flyTo({
-          destination: Cesium.Cartesian3.fromDegrees(80.2437, 12.9716, 2_500_000),
+          destination: Cesium.Cartesian3.fromDegrees(
+            HOME_VIEW_LON, HOME_VIEW_LAT, HOME_VIEW_HEIGHT
+          ),
           orientation: {
             heading: Cesium.Math.toRadians(0),
-            pitch: Cesium.Math.toRadians(-45),
+            pitch: Cesium.Math.toRadians(-90),
             roll: 0,
           },
           duration: 3.5,
@@ -346,21 +374,15 @@ export default function CelestialGlobe() {
         const orientation = Cesium.Transforms.headingPitchRollQuaternion(
           surface, new Cesium.HeadingPitchRoll(0, 0, 0)
         )
-        // Breathing pulse: fill alpha oscillates ~0.03→0.17, outline ~0.1→0.7.
-        // Only the fill callback advances the shared phase so both stay in sync.
+        // Breathing pulse on a vivid cyan fill: alpha oscillates ~0.47→0.63 so
+        // the cone stays clearly visible against the globe at all times.
         const coneMaterial = new Cesium.ColorMaterialProperty(
           new Cesium.CallbackProperty(() => {
             conePulseRef.current.phase += 0.03
-            const alpha = 0.10 + Math.sin(conePulseRef.current.phase) * 0.07
-            return Cesium.Color.fromCssColorString('#4fc3f7').withAlpha(alpha)
+            const alpha = 0.55 + Math.sin(conePulseRef.current.phase) * 0.08
+            return Cesium.Color.fromCssColorString('#00FFFF').withAlpha(alpha)
           }, false)
         )
-        // CylinderGraphics.outlineColor takes a Property<Color> directly (there is
-        // no outlineMaterial), so the outline pulse is a CallbackProperty<Color>.
-        const coneOutlineColor = new Cesium.CallbackProperty(() => {
-          const alpha = 0.4 + Math.sin(conePulseRef.current.phase) * 0.3
-          return Cesium.Color.fromCssColorString('#4fc3f7').withAlpha(alpha)
-        }, false)
 
         viewer.entities.add({
           id: 'zenith-cone',
@@ -373,8 +395,9 @@ export default function CelestialGlobe() {
             bottomRadius: 0, // apex — at the observer
             material: coneMaterial,
             outline: true,
-            outlineColor: coneOutlineColor,
-            outlineWidth: 2,
+            // Fully-opaque, wider edge so the cone reads crisply from any angle.
+            outlineColor: Cesium.Color.fromCssColorString('#00FFFF'),
+            outlineWidth: 3,
           },
         })
         viewer.scene.requestRender()
@@ -434,20 +457,24 @@ export default function CelestialGlobe() {
         (observer) => {
           renderZenithCone()
           renderObserverMarker()
-          // Cinematic fly-to the new observer — fires for city search,
-          // geolocation, and manual coords (all route through setObserver).
+          // Rotate to centre the new observer WITHOUT zooming: preserve the
+          // camera's current altitude (distance from Earth) and just recentre +
+          // face straight down. Fires for city search, geolocation, and manual
+          // coords (all route through setObserver).
+          if (!viewer || viewer.isDestroyed()) return
+          const currentHeight = viewer.camera.positionCartographic.height
           viewer.camera.flyTo({
             destination: Cesium.Cartesian3.fromDegrees(
               observer.longitude,
               observer.latitude,
-              2_500_000 // 2500 km — see the city, still see the cone
+              currentHeight // keep current zoom level — rotate only, no zoom
             ),
             orientation: {
               heading: Cesium.Math.toRadians(0),
-              pitch: Cesium.Math.toRadians(-45),
+              pitch: Cesium.Math.toRadians(-90),
               roll: 0,
             },
-            duration: 2.5,
+            duration: 1.5,
             easingFunction: Cesium.EasingFunction.CUBIC_IN_OUT,
           })
           viewer.scene.requestRender()
@@ -531,7 +558,14 @@ export default function CelestialGlobe() {
         }
 
         for (const obj of objects.values()) {
-          const position = Cesium.Cartesian3.fromDegrees(
+          // Solar-system bodies (Sun / planets / Moon) are drawn as their own 3D
+          // model entities by initSolarSystem (the orrery, revealed only when you
+          // zoom out). They live in the store purely for selection/search/panel,
+          // so never draw them as surface point dots — otherwise a planet appears
+          // stuck on Earth. Clear any stray primitive and skip.
+          if (obj.solarBody) { removeObject(obj.id); continue }
+
+          const targetPos = Cesium.Cartesian3.fromDegrees(
             obj.geo.longitude, obj.geo.latitude, obj.geo.heightKm * 1000
           )
           const style = getPointStyle(obj.category, obj.inZenithWindow)
@@ -539,20 +573,23 @@ export default function CelestialGlobe() {
           // ── Point ──
           const point = pointCache.get(obj.id)
           if (point) {
-            point.position = position
+            point.targetGeo = obj.geo
             point.color = style.color
             point.pixelSize = style.pixelSize
             point.outlineColor = style.outlineColor
             point.outlineWidth = style.outlineWidth
           } else {
-            pointCache.set(obj.id, pointCollection.add({
+            const p = pointCollection.add({
               id: obj.id,
-              position,
+              position: targetPos,
               color: style.color,
               pixelSize: style.pixelSize,
               outlineColor: style.outlineColor,
               outlineWidth: style.outlineWidth,
-            }))
+            })
+            p.currentGeo = { ...obj.geo }
+            p.targetGeo = obj.geo
+            pointCache.set(obj.id, p)
           }
 
           // ── Label (zenith / ISS / planet only — ~740 sat labels eliminated) ──
@@ -564,13 +601,12 @@ export default function CelestialGlobe() {
                 : C!.cyan
             const label = labelCache.get(obj.id)
             if (label) {
-              label.position = position
               label.text = obj.name
               label.fillColor = fill
             } else {
               labelCache.set(obj.id, labelCollection.add({
                 id: obj.id,
-                position,
+                position: targetPos,
                 text: obj.name,
                 font: '11px Space Mono, monospace',
                 fillColor: fill,
@@ -588,14 +624,66 @@ export default function CelestialGlobe() {
 
           // ── Trail (zenith + ISS, never planets) ──
           if ((obj.inZenithWindow || obj.category === 'iss') && obj.category !== 'planet') {
-            updateTrail(obj, position)
+            // Push the true target position into the history so the trail
+            // accurately represents the orbit, even if the point is gliding.
+            updateTrail(obj, targetPos)
           } else {
             removeTrail(obj.id)
           }
         }
 
-        // Render-on-demand: redraw once now that the scene has changed.
-        viewer.scene.requestRender()
+        // Start gliding points to their new targetGeos.
+        startPositionalAnimation()
+      }
+
+      // ── Positional animation loop ─────────────────────────────────────────
+      const startPositionalAnimation = () => {
+        if (twRaf) return // already running
+
+        const step = () => {
+          let animating = false
+          if (viewer.isDestroyed()) return
+
+          for (const [id, point] of pointCache.entries()) {
+            const cGeo = point.currentGeo
+            const tGeo = point.targetGeo
+            if (!cGeo || !tGeo) continue
+
+            const dLat = tGeo.latitude - cGeo.latitude
+            let dLon = tGeo.longitude - cGeo.longitude
+            while (dLon > 180) dLon -= 360
+            while (dLon < -180) dLon += 360
+            const dAlt = tGeo.heightKm - cGeo.heightKm
+
+            if (Math.abs(dLat) > 0.001 || Math.abs(dLon) > 0.001 || Math.abs(dAlt) > 0.1) {
+              cGeo.latitude += dLat * TW_SPEED
+              cGeo.longitude += dLon * TW_SPEED
+              cGeo.heightKm += dAlt * TW_SPEED
+              animating = true
+            } else {
+              cGeo.latitude = tGeo.latitude
+              cGeo.longitude = tGeo.longitude
+              cGeo.heightKm = tGeo.heightKm
+            }
+
+            const currentPos = Cesium.Cartesian3.fromDegrees(
+              cGeo.longitude, cGeo.latitude, cGeo.heightKm * 1000
+            )
+            point.position = currentPos
+
+            const label = labelCache.get(id)
+            if (label) label.position = currentPos
+          }
+
+          viewer.scene.requestRender()
+
+          if (animating) {
+            twRaf = requestAnimationFrame(step)
+          } else {
+            twRaf = 0
+          }
+        }
+        twRaf = requestAnimationFrame(step)
       }
 
       // Initial sync runs immediately (no RAF — viewer just initialised, nothing to block).
@@ -637,6 +725,13 @@ export default function CelestialGlobe() {
       window.addEventListener('keydown', onKeyDown)
       unsubs.push(() => window.removeEventListener('keydown', onKeyDown))
 
+      // Headlight state — while a satellite is being viewed we light it from the
+      // camera so it's bright from any angle; on exit we restore the sun so the
+      // globe's normal day/night lighting returns.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let savedSunLight: any = null
+      let headlightUpdate: (() => void) | null = null
+
       // Tear down the tracking model + camera lock. Order matters: clear
       // trackedEntity BEFORE removing the model so Cesium releases the camera
       // transform cleanly — a dangling trackedEntity leaves the camera locked.
@@ -648,6 +743,12 @@ export default function CelestialGlobe() {
         // flyTo / free navigation isn't interpreted in the satellite-locked frame.
         try { viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY) } catch { /* ignore */ }
         viewer.entities.removeById('tracking-satellite-model')
+        // Remove the headlight + restore the sun light (globe back to normal).
+        if (headlightUpdate) {
+          try { viewer.scene.preRender.removeEventListener(headlightUpdate) } catch { /* ignore */ }
+          headlightUpdate = null
+        }
+        if (savedSunLight) { viewer.scene.light = savedSunLight; savedSunLight = null }
       }
 
       const unsubTracking = useZenithStore.subscribe(
@@ -685,42 +786,55 @@ export default function CelestialGlobe() {
           // the store, so the matched entity's `show` is set false inside it.
           syncObjectMarkers(objects)
 
-          // Share the satellite's SampledPositionProperty so the model moves with
-          // it. Recycling is skipped for the tracked id (see syncObjectMarkers),
-          // so this reference keeps receiving samples and never goes stale.
-          const cacheEntry = entityCache.get(trackingId)
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const posProp: any = cacheEntry?.posProp ?? new Cesium.ConstantPositionProperty(
-            Cesium.Cartesian3.fromDegrees(obj.geo.longitude, obj.geo.latitude, obj.geo.heightKm * 1000)
+          // Build a static position property from the object's current coordinates.
+          // The old entity-cache approach was removed in the batched-primitives
+          // refactor; the tracked model's position is refreshed each data tick
+          // by the syncObjectMarkers pass which writes directly to posProp below.
+          const trackPos = Cesium.Cartesian3.fromDegrees(
+            obj.geo.longitude, obj.geo.latitude, obj.geo.heightKm * 1000
           )
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const posProp: any = new Cesium.ConstantPositionProperty(trackPos)
           const isISS = obj.category === 'iss'
+
+          // Orient the model to the local east-north-up frame so it sits upright
+          // over Earth (panels level, body toward the surface) instead of a random
+          // pose — VelocityOrientationProperty produces nothing here because the
+          // tracked position is static (zero velocity).
+          const trackOrientation = Cesium.Transforms.headingPitchRollQuaternion(
+            trackPos, new Cesium.HeadingPitchRoll(0, 0, 0)
+          )
+
+          // ISS opens its dedicated model; every other satellite opens one of the
+          // satellite GLBs (varied per object) so it's not always the same model.
+          const modelUri = isISS ? '/models/iss.glb' : pickSatelliteModel(obj.id)
+
+          // Back view that frames the satellite against the globe: the camera sits
+          // on the space (zenith / +up) side and a little to the south, looking
+          // down past the model toward Earth — so the satellite is in the
+          // foreground with Earth filling the background. The range scales with
+          // altitude so low and high orbits alike keep both in frame (a fixed
+          // offset put the globe out of view for higher satellites).
+          const altM = obj.geo.heightKm * 1000
+          const range = Math.max(300_000, Math.min(altM * 0.5, 4_000_000))
+          const trackViewFrom = new Cesium.Cartesian3(0, -range * 0.85, range)
 
           // ── 3D GLB model entity ──────────────────────────────────────────
           const trackedModel = viewer.entities.add({
             id: 'tracking-satellite-model',
             position: posProp,
-            orientation: new Cesium.VelocityOrientationProperty(posProp),
-            // Initial camera offset in the satellite's local east-north-up frame
-            // (south + above). Cesium frames the camera here when tracking begins;
-            // the user can then orbit/zoom freely around the satellite.
-            viewFrom: new Cesium.Cartesian3(
-              0,
-              isISS ? -280_000 : -220_000,
-              isISS ? 150_000 : 120_000
-            ),
+            orientation: trackOrientation,
+            // Initial camera offset (east-north-up) — the back view computed above.
+            // The user can still orbit/zoom freely once tracking begins.
+            viewFrom: trackViewFrom,
             model: {
-              uri: '/models/satellite.glb',
-              minimumPixelSize: 128, // keep the model large + always on screen
-              maximumScale: 60000,
-              silhouetteColor: isISS
-                ? Cesium.Color.fromCssColorString('#ffcc02')
-                : Cesium.Color.CYAN,
-              silhouetteSize: 3.0, // bright glowing outline around the model
-              color: isISS
-                ? Cesium.Color.fromCssColorString('#ffcc02').withAlpha(0.95)
-                : Cesium.Color.fromCssColorString('#4fc3f7').withAlpha(0.95),
-              colorBlendMode: Cesium.ColorBlendMode.MIX,
-              colorBlendAmount: 0.4, // mix model texture with category colour
+              uri: modelUri,
+              // Big + always on screen so the model is the clear focus of the view.
+              minimumPixelSize: 1000,
+              maximumScale: 200000,
+              // Extra brightness on top of the headlight below so the model reads
+              // clearly (scales the light on THIS model only).
+              lightColor: new Cesium.Color(4.0, 4.0, 4.0, 1.0),
               runAnimations: true,
               heightReference: Cesium.HeightReference.NONE,
             },
@@ -729,6 +843,26 @@ export default function CelestialGlobe() {
           // Lock the camera onto the satellite. trackedEntity follows it across
           // ticks and lets the user drag to orbit / scroll to zoom around it.
           viewer.trackedEntity = trackedModel
+
+          // Headlight: light the model from the camera direction so it's fully
+          // visible from any angle while viewing (the sun's position no longer
+          // matters). Saved + restored in clearTrackingView so the globe's normal
+          // sun lighting returns the instant we stop viewing.
+          savedSunLight = viewer.scene.light
+          const headlight = new Cesium.DirectionalLight({
+            direction: Cesium.Cartesian3.clone(
+              viewer.camera.directionWC, new Cesium.Cartesian3()
+            ),
+            intensity: 3.5,
+          })
+          viewer.scene.light = headlight
+          headlightUpdate = () => {
+            if (viewer.isDestroyed()) return
+            // Keep the light aligned with the camera as the user orbits.
+            Cesium.Cartesian3.clone(viewer.camera.directionWC, headlight.direction)
+          }
+          viewer.scene.preRender.addEventListener(headlightUpdate)
+          viewer.scene.requestRender()
         }
       )
       unsubs.push(unsubTracking)
@@ -763,6 +897,7 @@ export default function CelestialGlobe() {
     return () => {
       cancelled = true
       if (pendingSyncRaf) { cancelAnimationFrame(pendingSyncRaf); pendingSyncRaf = 0 }
+      if (twRaf) { cancelAnimationFrame(twRaf); twRaf = 0 }
       if (readyTimeout) { clearTimeout(readyTimeout); readyTimeout = null }
       useZenithStore.getState().setGlobeReady(false)
       unsubs.forEach((u) => u())

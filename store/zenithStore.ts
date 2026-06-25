@@ -28,6 +28,9 @@ interface ZenithState {
   globeReady: boolean
   /** When true, the globe caps its frame rate to free the GPU (e.g. while the landing overlay is up). */
   globeLowPower: boolean
+  /** When false, the refresh loops (TLE fetch + propagation) skip their ticks.
+   *  The worker stays alive with parsed TLEs in memory so resuming is instant. */
+  simulationActive: boolean
   upsertObjects: (objs: CelestialObject[]) => void
   /** Register the solar-system bodies once; merged into `objects` immediately and on every tick. */
   setSolarObjects: (bodies: CelestialObject[]) => void
@@ -40,6 +43,7 @@ interface ZenithState {
   setLastError: (message: string | null) => void
   setGlobeReady: (ready: boolean) => void
   setGlobeLowPower: (low: boolean) => void
+  setSimulationActive: (active: boolean) => void
 }
 
 export const useZenithStore = create<ZenithState>()(
@@ -62,6 +66,7 @@ export const useZenithStore = create<ZenithState>()(
     offsetHours: 0,
     globeReady: false,
     globeLowPower: false,
+    simulationActive: true,
 
     upsertObjects: (objs) =>
       set((state) => {
@@ -125,6 +130,8 @@ export const useZenithStore = create<ZenithState>()(
     setGlobeReady: (globeReady) => set({ globeReady }),
 
     setGlobeLowPower: (globeLowPower) => set({ globeLowPower }),
+
+    setSimulationActive: (simulationActive) => set({ simulationActive }),
   }))
 )
 

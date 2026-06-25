@@ -9,7 +9,9 @@ const cesiumDest = path.join(process.cwd(), 'public/_cesium')
 
 const nextConfig: NextConfig = {
   transpilePackages: ['cesium'],
+    
   webpack(config, { isServer, webpack }) {
+    config.experiments = { ...config.experiments, topLevelAwait: true }
     if (!isServer) {
       config.plugins.push(
         new webpack.DefinePlugin({

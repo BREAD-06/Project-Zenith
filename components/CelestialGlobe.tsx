@@ -187,8 +187,8 @@ export default function CelestialGlobe() {
 
       if (cancelled) { viewer.isDestroyed() || viewer.destroy(); return }
 
-      // Cap at 1.5× — a 2× retina device would otherwise render at 4× the pixels.
-      viewer.resolutionScale = Math.min(window.devicePixelRatio ?? 1, 1.5)
+      // Cap at 1.0× to significantly reduce pixel rendering load on high-DPI / 4K displays.
+      viewer.resolutionScale = Math.min(window.devicePixelRatio ?? 1, 1.0)
 
       if (process.env.NODE_ENV === 'development') {
         viewer.scene.debugShowFramesPerSecond = true
@@ -222,12 +222,15 @@ export default function CelestialGlobe() {
 
       if (cancelled || viewer.isDestroyed()) return
 
+      pointCollection = new Cesium.PointPrimitiveCollection()
+      viewer.scene.primitives.add(pointCollection)
+
       // ── Globe ────────────────────────────────────────────────────────────────
       viewer.scene.globe.show = true
       viewer.scene.globe.baseColor = Cesium.Color.BLACK
-      // Back to default 2.0 — 1.5 loads noticeably more tiles without a visible quality gain
-      // at 22 Mm altitude.
-      viewer.scene.globe.maximumScreenSpaceError = 2.0
+      // Increase from 2.0 to 4.0 to reduce the number of terrain/imagery tiles loaded,
+      // dramatically improving panning and rotation performance.
+      viewer.scene.globe.maximumScreenSpaceError = 4.0
       viewer.scene.globe.depthTestAgainstTerrain = false
 
       // ── Atmosphere & lighting ─────────────────────────────────────────────────
@@ -507,6 +510,12 @@ export default function CelestialGlobe() {
         for (const id of pointCache.keys()) {
           if (!objects.has(id)) removeObject(id)
         }
+        for (const [id, pt] of pointCache.entries()) {
+          if (!objects.has(id)) {
+            pointCollection.remove(pt)
+            pointCache.delete(id)
+          }
+        }
 
         for (const obj of objects.values()) {
           const position = Cesium.Cartesian3.fromDegrees(
@@ -592,6 +601,132 @@ export default function CelestialGlobe() {
         }
       )
       unsubs.push(unsubObjects)
+
+      // Selection only opens the detail panel + upgrades the marker to an Entity.
+      // The camera is owned exclusively by the tracking subscription below, so
+      // selection never touches trackedEntity (otherwise the two would fight when
+      // a click sets both selectedObjectId and trackingObjectId in the same frame).
+      const unsubSelectedObject = useZenithStore.subscribe(
+        (s) => s.selectedObjectId,
+        () => {
+          syncObjectMarkers(useZenithStore.getState().objects)
+        }
+      )
+      unsubs.push(unsubSelectedObject)
+
+      // ── 3D satellite tracking ──────────────────────────────────────────────────
+      // Uses Cesium's native trackedEntity: the camera locks onto the satellite
+      // and follows it across ticks, while the user keeps full mouse control to
+      // orbit / zoom around it. Escape exits tracking (→ flies back to home view).
+      const onKeyDown = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') useZenithStore.getState().setTrackingObjectId(null)
+      }
+      window.addEventListener('keydown', onKeyDown)
+      unsubs.push(() => window.removeEventListener('keydown', onKeyDown))
+
+      // Tear down the tracking model + camera lock. Order matters: clear
+      // trackedEntity BEFORE removing the model so Cesium releases the camera
+      // transform cleanly — a dangling trackedEntity leaves the camera locked.
+      const clearTrackingView = () => {
+        if (viewer.isDestroyed()) return
+        viewer.trackedEntity = undefined
+        // Canonical "stop tracking" release: resets the camera reference frame to
+        // world space while preserving its current position (no jump), so a later
+        // flyTo / free navigation isn't interpreted in the satellite-locked frame.
+        try { viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY) } catch { /* ignore */ }
+        viewer.entities.removeById('tracking-satellite-model')
+      }
+
+      const unsubTracking = useZenithStore.subscribe(
+        (s) => s.trackingObjectId,
+        (trackingId) => {
+          clearTrackingView()
+
+          if (!trackingId || viewer.isDestroyed()) {
+            // Restore the previously-tracked satellite's normal marker, then fly
+            // back to the opening view of the globe (how it looked on first load).
+            syncObjectMarkers(useZenithStore.getState().objects)
+            if (!viewer.isDestroyed()) {
+              viewer.camera.flyTo({
+                destination: Cesium.Cartesian3.fromDegrees(
+                  HOME_VIEW_LON, HOME_VIEW_LAT, HOME_VIEW_HEIGHT
+                ),
+                orientation: {
+                  heading: Cesium.Math.toRadians(0),
+                  pitch: Cesium.Math.toRadians(-90),
+                  roll: 0,
+                },
+                duration: 1.5,
+                easingFunction: Cesium.EasingFunction.CUBIC_IN_OUT,
+              })
+            }
+            return
+          }
+
+          const objects = useZenithStore.getState().objects
+          const obj = objects.get(trackingId)
+          if (!obj) return
+
+          // Promote the satellite to an Entity and hide its normal marker (the
+          // tracking model replaces it). syncObjectMarkers reads trackingId from
+          // the store, so the matched entity's `show` is set false inside it.
+          syncObjectMarkers(objects)
+
+          // Share the satellite's SampledPositionProperty so the model moves with
+          // it. Recycling is skipped for the tracked id (see syncObjectMarkers),
+          // so this reference keeps receiving samples and never goes stale.
+          const cacheEntry = entityCache.get(trackingId)
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const posProp: any = cacheEntry?.posProp ?? new Cesium.ConstantPositionProperty(
+            Cesium.Cartesian3.fromDegrees(obj.geo.longitude, obj.geo.latitude, obj.geo.heightKm * 1000)
+          )
+          const isISS = obj.category === 'iss'
+
+          // ── 3D GLB model entity ──────────────────────────────────────────
+          const trackedModel = viewer.entities.add({
+            id: 'tracking-satellite-model',
+            position: posProp,
+            orientation: new Cesium.VelocityOrientationProperty(posProp),
+            // Initial camera offset in the satellite's local east-north-up frame
+            // (south + above). Cesium frames the camera here when tracking begins;
+            // the user can then orbit/zoom freely around the satellite.
+            viewFrom: new Cesium.Cartesian3(
+              0,
+              isISS ? -280_000 : -220_000,
+              isISS ? 150_000 : 120_000
+            ),
+            model: {
+              uri: '/models/satellite.glb',
+              minimumPixelSize: 128, // keep the model large + always on screen
+              maximumScale: 60000,
+              silhouetteColor: isISS
+                ? Cesium.Color.fromCssColorString('#ffcc02')
+                : Cesium.Color.CYAN,
+              silhouetteSize: 3.0, // bright glowing outline around the model
+              color: isISS
+                ? Cesium.Color.fromCssColorString('#ffcc02').withAlpha(0.95)
+                : Cesium.Color.fromCssColorString('#4fc3f7').withAlpha(0.95),
+              colorBlendMode: Cesium.ColorBlendMode.MIX,
+              colorBlendAmount: 0.4, // mix model texture with category colour
+              runAnimations: true,
+              heightReference: Cesium.HeightReference.NONE,
+            },
+          })
+
+          // Lock the camera onto the satellite. trackedEntity follows it across
+          // ticks and lets the user drag to orbit / scroll to zoom around it.
+          viewer.trackedEntity = trackedModel
+        }
+      )
+      unsubs.push(unsubTracking)
+      unsubs.push(clearTrackingView)
+
+      // ── Solar system (built around the untouched Earth) ───────────────────────
+      // Adds the Sun + planets + Moon as sibling entities orbiting the fixed Earth.
+      // It only reads the viewer/store and adds its own entities — Earth, satellites,
+      // the cone, the observer marker, and the camera defaults are all left intact.
+      const disposeSolarSystem = initSolarSystem(Cesium, viewer, useZenithStore)
+      unsubs.push(disposeSolarSystem)
     })
 
     return () => {

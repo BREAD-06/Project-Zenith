@@ -18,6 +18,12 @@ import { useZenithStore } from '@/store/zenithStore'
 export default function ZenithApp() {
   const [showDev, setShowDev] = useState(false)
 
+  // 3D satellite tracking: on phones we clear the chrome so the model gets the
+  // whole screen, leaving only an exit ✕. Desktop keeps its panels.
+  const tracking = useZenithStore((s) => s.trackingObjectId !== null)
+  const setTrackingObjectId = useZenithStore((s) => s.setTrackingObjectId)
+  const setSelectedObjectId = useZenithStore((s) => s.setSelectedObjectId)
+
   // Disclaimer stays visible until satellites are actually rendered on the globe.
   const satellitesLoaded = useZenithStore(
     (s) => s.objects.size > 0 && !s.dataLoading
@@ -44,19 +50,38 @@ export default function ZenithApp() {
   // h-[100dvh] (dynamic viewport height) so mobile browser chrome doesn't crop the bottom.
   return (
     <main className="flex flex-col h-[100dvh] bg-[#050510] overflow-hidden">
-      <TopBar />
+      {/* Top bar hides on phones while a satellite's 3D model is the focus. */}
+      <div className={tracking ? 'hidden sm:contents' : 'contents'}>
+        <TopBar />
+      </div>
       <div className="relative flex-1 overflow-hidden">
         <GlobeWrapper />
         {/* UI overlay layer — fades/scales in on load. pointer-events-none so the
             globe stays interactive through the gaps; interactive panels re-enable
             their own pointer events. ObjectDetailPanel is kept outside because it's
-            position:fixed and must not inherit this layer's transform. */}
-        <div className="absolute inset-0 pointer-events-none cosmic-fade-in">
+            position:fixed and must not inherit this layer's transform.
+            Hidden on phones during 3D tracking so the model owns the screen. */}
+        <div className={`absolute inset-0 pointer-events-none cosmic-fade-in ${tracking ? 'hidden sm:block' : ''}`}>
           <RadarOverlay />
           <ZenithWindow />
           {showDev && <DevSeedButton />}
         </div>
-        <ObjectDetailPanel />
+        <div className={tracking ? 'hidden sm:contents' : 'contents'}>
+          <ObjectDetailPanel />
+        </div>
+
+        {/* Exit 3D view — phones only. The chrome is cleared while tracking, so this
+            ✕ is the way back to the globe (also clears the selection for a clean exit). */}
+        {tracking && (
+          <button
+            onClick={() => { setTrackingObjectId(null); setSelectedObjectId(null) }}
+            aria-label="Exit 3D satellite view"
+            className="sm:hidden fixed z-50 flex items-center justify-center h-11 w-11 rounded-full bg-black/55 backdrop-blur-md border border-cyan-400/40 text-cyan-100 text-xl leading-none shadow-lg active:scale-95 transition-transform"
+            style={{ top: 'max(1rem, env(safe-area-inset-top))', right: '1rem' }}
+          >
+            ✕
+          </button>
+        )}
 
         {/* Rendering disclaimer — fades in, auto-dismisses after 8 s */}
         {showDisclaimer && (

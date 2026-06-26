@@ -175,12 +175,11 @@ export default function ObjectDetailPanel() {
                 </>
               ) : (
                 <>
-                  {/* View in 3D — only for satellites/ISS currently in the cone
-                      (zenith window). Stays available while tracking so the same
-                      button can toggle the view back off. Toggling trackingObjectId
-                      drives the camera lock + 3D model in CelestialGlobe. */}
-                  {(data.category === 'satellite' || data.category === 'iss') &&
-                    (data.inZenithWindow || isTracking) && (
+                  {/* View in 3D — available for any satellite/ISS. Clicking a dot
+                      already zooms straight in; this button toggles the view back
+                      off (while tracking) or re-enters it (after exiting). Toggling
+                      trackingObjectId drives the camera lock + 3D model in CelestialGlobe. */}
+                  {(data.category === 'satellite' || data.category === 'iss') && (
                       <div className="px-5 pt-4">
                         <button
                           onClick={() =>

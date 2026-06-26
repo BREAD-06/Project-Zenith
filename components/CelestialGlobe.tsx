@@ -182,6 +182,10 @@ export default function CelestialGlobe() {
     const trailCache = new Map<string, any>()
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const trailHistory = new Map<string, any[]>()
+    // Id of the object currently shown as a tracked 3D model. Its flat dot/label
+    // are hidden while the model stands in for it; the model reads this object's
+    // gliding position each frame so it moves exactly like the live marker.
+    let trackedObjId: string | null = null
 
     getCesium().then(async (Cesium) => {
       if (cancelled || !containerRef.current) return
@@ -330,9 +334,11 @@ export default function CelestialGlobe() {
       unsubs.push(() => clearTimeout(introTimeout))
 
       // ── Entity selection ──────────────────────────────────────────────────────
-      // Click a tracked object → open its detail panel via the store. Clicking
-      // empty space (or a non-object entity like the cone/observer marker)
-      // deselects. selectedObjectId is the single source of truth for the panel.
+      // Click a satellite/ISS dot → open its detail panel AND zoom into its live
+      // 3D model view (camera locks on and follows it). Clicking a planet just
+      // opens the panel (the solar-system module owns its camera). Clicking empty
+      // space deselects and exits any 3D view. selectedObjectId drives the panel;
+      // trackingObjectId drives the 3D model + camera lock (see subscription below).
       const clickHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas)
       clickHandler.setInputAction(
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -342,12 +348,24 @@ export default function CelestialGlobe() {
           // string); remaining Entities (cone, observer) expose it as `.id.id`.
           let id: unknown = picked?.id
           if (id && typeof id === 'object') id = (id as { id?: unknown }).id
-          const objects = useZenithStore.getState().objects
-          useZenithStore
-            .getState()
-            .setSelectedObjectId(
-              typeof id === 'string' && objects.has(id) ? id : null
+          // Clicking the tracked model itself (while orbiting it) must not exit —
+          // the model entity's id isn't an object id, so ignore it entirely.
+          if (id === 'tracking-satellite-model') return
+
+          const store = useZenithStore.getState()
+          const objects = store.objects
+          if (typeof id === 'string' && objects.has(id)) {
+            store.setSelectedObjectId(id)
+            const obj = objects.get(id)
+            // Satellites + the ISS zoom straight into the moving 3D model; other
+            // bodies (planets) just open the panel.
+            store.setTrackingObjectId(
+              obj && (obj.category === 'satellite' || obj.category === 'iss') ? id : null
             )
+          } else {
+            store.setSelectedObjectId(null)
+            store.setTrackingObjectId(null)
+          }
         },
         Cesium.ScreenSpaceEventType.LEFT_CLICK
       )
@@ -571,6 +589,8 @@ export default function CelestialGlobe() {
           const style = getPointStyle(obj.category, obj.inZenithWindow)
 
           // ── Point ──
+          // The tracked object's dot is hidden — its 3D model stands in for it.
+          const hideForModel = obj.id === trackedObjId
           const point = pointCache.get(obj.id)
           if (point) {
             point.targetGeo = obj.geo
@@ -578,6 +598,7 @@ export default function CelestialGlobe() {
             point.pixelSize = style.pixelSize
             point.outlineColor = style.outlineColor
             point.outlineWidth = style.outlineWidth
+            point.show = !hideForModel
           } else {
             const p = pointCollection.add({
               id: obj.id,
@@ -586,6 +607,7 @@ export default function CelestialGlobe() {
               pixelSize: style.pixelSize,
               outlineColor: style.outlineColor,
               outlineWidth: style.outlineWidth,
+              show: !hideForModel,
             })
             p.currentGeo = { ...obj.geo }
             p.targetGeo = obj.geo
@@ -603,6 +625,7 @@ export default function CelestialGlobe() {
             if (label) {
               label.text = obj.name
               label.fillColor = fill
+              label.show = !hideForModel
             } else {
               labelCache.set(obj.id, labelCollection.add({
                 id: obj.id,
@@ -615,6 +638,7 @@ export default function CelestialGlobe() {
                 style: Cesium.LabelStyle.FILL_AND_OUTLINE,
                 pixelOffset: C!.labelPixelOffset,
                 eyeOffset: C!.eyeLabel,
+                show: !hideForModel,
               }))
             }
           } else {
@@ -736,6 +760,8 @@ export default function CelestialGlobe() {
       // trackedEntity BEFORE removing the model so Cesium releases the camera
       // transform cleanly — a dangling trackedEntity leaves the camera locked.
       const clearTrackingView = () => {
+        // Stop hiding the previously-tracked dot (it's restored on the next sync).
+        trackedObjId = null
         if (viewer.isDestroyed()) return
         viewer.trackedEntity = undefined
         // Canonical "stop tracking" release: resets the camera reference frame to
@@ -781,28 +807,51 @@ export default function CelestialGlobe() {
           const obj = objects.get(trackingId)
           if (!obj) return
 
-          // Promote the satellite to an Entity and hide its normal marker (the
-          // tracking model replaces it). syncObjectMarkers reads trackingId from
-          // the store, so the matched entity's `show` is set false inside it.
+          // Hide this object's flat dot/label — the 3D model stands in for it —
+          // then re-sync so the change applies.
+          trackedObjId = trackingId
           syncObjectMarkers(objects)
 
-          // Build a static position property from the object's current coordinates.
-          // The old entity-cache approach was removed in the batched-primitives
-          // refactor; the tracked model's position is refreshed each data tick
-          // by the syncObjectMarkers pass which writes directly to posProp below.
-          const trackPos = Cesium.Cartesian3.fromDegrees(
+          const isISS = obj.category === 'iss'
+
+          // ── Live position ────────────────────────────────────────────────
+          // The model reads the tracked object's GLIDING marker position every
+          // frame, so it slides across its orbit exactly like the live dot (and
+          // the locked camera follows it) instead of sitting frozen. Falls back to
+          // the last store position if the point isn't in the cache yet.
+          const fallbackPos = Cesium.Cartesian3.fromDegrees(
             obj.geo.longitude, obj.geo.latitude, obj.geo.heightKm * 1000
           )
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const posProp: any = new Cesium.ConstantPositionProperty(trackPos)
-          const isISS = obj.category === 'iss'
+          const livePosition = (result: any) => {
+            const pt = pointCache.get(trackingId)
+            const g = pt?.currentGeo
+            if (g) {
+              return Cesium.Cartesian3.fromDegrees(
+                g.longitude, g.latitude, g.heightKm * 1000, undefined, result
+              )
+            }
+            return Cesium.Cartesian3.clone(fallbackPos, result)
+          }
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const posProp: any = new Cesium.CallbackPositionProperty(
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (_time: any, result: any) => livePosition(result), false
+          )
 
-          // Orient the model to the local east-north-up frame so it sits upright
-          // over Earth (panels level, body toward the surface) instead of a random
-          // pose — VelocityOrientationProperty produces nothing here because the
-          // tracked position is static (zero velocity).
-          const trackOrientation = Cesium.Transforms.headingPitchRollQuaternion(
-            trackPos, new Cesium.HeadingPitchRoll(0, 0, 0)
+          // Keep the model upright in its local east-north-up frame as it moves
+          // (panels level, body toward Earth) — recomputed each frame from the live
+          // position so it stays oriented to the surface beneath it.
+          const hpr = new Cesium.HeadingPitchRoll(0, 0, 0)
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const orientProp: any = new Cesium.CallbackProperty(
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (_time: any, result: any) => {
+              const pos = livePosition(new Cesium.Cartesian3())
+              return Cesium.Transforms.headingPitchRollQuaternion(
+                pos, hpr, undefined, undefined, result
+              )
+            }, false
           )
 
           // ISS opens its dedicated model; every other satellite opens one of the
@@ -819,19 +868,27 @@ export default function CelestialGlobe() {
           const range = Math.max(300_000, Math.min(altM * 0.5, 4_000_000))
           const trackViewFrom = new Cesium.Cartesian3(0, -range * 0.85, range)
 
+          // On-screen model size, scaled to the viewport so it never overflows
+          // a phone. ~55% of the smaller screen dimension so the satellite is
+          // prominently visible when zoomed in, clamped to [200, 450].
+          const cv = viewer.scene.canvas
+          const minDim = Math.min(cv.clientWidth || 0, cv.clientHeight || 0) || 360
+          const modelMinPx = Math.max(200, Math.min(Math.round(minDim * 0.55), 450))
+
           // ── 3D GLB model entity ──────────────────────────────────────────
           const trackedModel = viewer.entities.add({
             id: 'tracking-satellite-model',
             position: posProp,
-            orientation: trackOrientation,
+            orientation: orientProp,
             // Initial camera offset (east-north-up) — the back view computed above.
             // The user can still orbit/zoom freely once tracking begins.
             viewFrom: trackViewFrom,
             model: {
               uri: modelUri,
-              // Big + always on screen so the model is the clear focus of the view.
-              minimumPixelSize: 1000,
-              maximumScale: 200000,
+              // Large, viewport-aware size so the satellite model is prominently
+              // visible against the globe when a dot is clicked.
+              minimumPixelSize: modelMinPx,
+              maximumScale: 500000,
               // Extra brightness on top of the headlight below so the model reads
               // clearly (scales the light on THIS model only).
               lightColor: new Cesium.Color(4.0, 4.0, 4.0, 1.0),

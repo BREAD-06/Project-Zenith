@@ -14,8 +14,9 @@ const SOURCES = [
 // (stale-while-revalidate) so the client never waits.
 const CACHE_TTL_MS = 15 * 60 * 1000 // 15 minutes
 
-// Hard timeout for CelesTrak fetches — fail fast instead of hanging.
-const FETCH_TIMEOUT_MS = 15_000
+// Hard timeout for CelesTrak fetches — 8 s keeps the serverless function
+// within Vercel Hobby's 10 s execution limit.
+const FETCH_TIMEOUT_MS = 8_000
 
 export const dynamic = 'force-dynamic'
 

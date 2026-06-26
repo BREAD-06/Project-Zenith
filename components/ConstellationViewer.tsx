@@ -135,8 +135,8 @@ export default function ConstellationViewer() {
         </button>
       </Link>
 
-      {/* ── Top-center: page title ──────────────────────────────────────────── */}
-      <div className="fixed top-4 left-1/2 -translate-x-1/2 z-40 text-cyan-400 text-xs font-mono tracking-widest pointer-events-none">
+      {/* ── Top-center: page title (hidden on phones — corners hold the controls) ── */}
+      <div className="hidden sm:block fixed top-4 left-1/2 -translate-x-1/2 z-40 text-cyan-400 text-xs font-mono tracking-widest pointer-events-none">
         ✦ CONSTELLATION VIEWER
       </div>
 

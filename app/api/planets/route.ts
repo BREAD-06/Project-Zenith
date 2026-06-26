@@ -19,7 +19,9 @@ const TARGETS: { id: string; name: string }[] = [
 
 const AU_KM = 149_597_870.7
 const DEG2RAD = Math.PI / 180
-const FETCH_TIMEOUT_MS = 15_000
+// 4 s per planet; 5 sequential fetches = 20 s worst case (requires Pro maxDuration).
+// Each planet failure is silently skipped — one bad fetch won't sink the batch.
+const FETCH_TIMEOUT_MS = 4_000
 
 // Planetary positions barely move minute-to-minute, so a 60 s cache is plenty.
 export const revalidate = 60

@@ -31,7 +31,7 @@ export default function ConstellationPanel({
 
   return (
     <div
-      className="constellation-panel-in fixed bottom-3 left-3 sm:bottom-4 sm:left-4 z-30 w-80 max-w-[calc(100vw-1.5rem)] bg-black/40 backdrop-blur-md border border-cyan-500/20 rounded-xl p-4 shadow-2xl"
+      className="constellation-panel-in fixed bottom-3 left-3 sm:bottom-4 sm:left-4 z-30 w-80 max-w-[calc(100vw-1.5rem)] max-h-[60vh] overflow-y-auto bg-black/40 backdrop-blur-md border border-cyan-500/20 rounded-xl p-4 shadow-2xl"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">

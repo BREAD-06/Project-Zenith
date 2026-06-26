@@ -160,7 +160,7 @@ export default function ZenithWindow() {
           className="flex items-baseline gap-1.5 min-w-0 text-left"
         >
           <span className="font-semibold text-cyan-400 tracking-tight">Zenith Window</span>
-          <span className="text-slate-400 text-xs font-mono">
+          <span className="hidden sm:inline text-slate-400 text-xs font-mono">
             {ZENITH_WINDOW.minAlt}°–{ZENITH_WINDOW.maxAlt}°
           </span>
         </button>

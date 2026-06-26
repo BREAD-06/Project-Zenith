@@ -1,0 +1,6 @@
+{
+  "functions": {
+    "app/api/planets/route.ts": { "maxDuration": 30 },
+    "app/api/tle/route.ts": { "maxDuration": 10 }
+  }
+}

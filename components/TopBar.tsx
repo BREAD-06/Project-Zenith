@@ -24,7 +24,7 @@ export default function TopBar() {
       style={{ paddingTop: 'max(0.5rem, env(safe-area-inset-top))' }}
     >
       <div className="flex items-center gap-2 shrink-0">
-        <span className="text-lg font-bold tracking-tight bg-gradient-to-r from-cyan-300 via-sky-300 to-violet-300 bg-clip-text text-transparent">
+        <span className="text-base sm:text-lg font-bold tracking-tight bg-gradient-to-r from-cyan-300 via-sky-300 to-violet-300 bg-clip-text text-transparent">
           ✦ Zenith
         </span>
         <span className="text-slate-600 hidden lg:inline">/</span>
@@ -49,7 +49,7 @@ export default function TopBar() {
             <circle cx="11" cy="11" r="7" />
             <path d="m20 20-3.2-3.2" />
           </svg>
-          <span className="text-white font-medium leading-none">{observer.label}</span>
+          <span className="hidden min-[360px]:inline text-white font-medium leading-none max-w-[4.5rem] sm:max-w-none truncate">{observer.label}</span>
           <span className="text-slate-500 font-mono text-[11px] leading-none hidden xl:inline">
             {observer.latitude.toFixed(2)}°, {observer.longitude.toFixed(2)}°
           </span>
@@ -89,13 +89,13 @@ export default function TopBar() {
 
         {lastError ? (
           <span
-            className="bg-red-500/10 text-red-400 border border-red-500/30 rounded-full px-2 sm:px-3 py-1 text-xs max-w-[8rem] sm:max-w-[14rem] truncate shrink-0"
+            className="hidden sm:inline-block bg-red-500/10 text-red-400 border border-red-500/30 rounded-full px-2 sm:px-3 py-1 text-xs max-w-[8rem] sm:max-w-[14rem] truncate shrink-0"
             title={lastError}
           >
             ⚠ {lastError}
           </span>
         ) : (
-          <span className="bg-white/[0.04] backdrop-blur-sm border border-white/10 rounded-full px-2 sm:px-3 py-1 text-slate-400 text-xs font-mono flex items-center gap-1.5 shrink-0">
+          <span className="hidden sm:flex bg-white/[0.04] backdrop-blur-sm border border-white/10 rounded-full px-2 sm:px-3 py-1 text-slate-400 text-xs font-mono items-center gap-1.5 shrink-0">
             <span
               className={`inline-block h-1.5 w-1.5 rounded-full ${
                 dataLoading ? 'bg-cyan-400 animate-pulse' : 'bg-emerald-500/70 shadow-[0_0_6px_rgba(16,185,129,0.6)]'
